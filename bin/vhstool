@@ -181,7 +181,7 @@ cmd_build() {
     -i "$d/video.mkv" -itsoffset "$off" -i "$ref" \
     -map 0:v -map 1:a \
     -af "asetrate=$rate,aresample=48000:resampler=soxr" \
-    -c:v copy -c:a aac -b:a 192k \
+    -c:v copy -c:a flac -compression_level 8 \
     -shortest "$d/$name.mkv"
   [ -f "$d/$name.mkv" ] && ok "完成 → $d/$name.mkv  ($(du -h "$d/$name.mkv" | cut -f1))" || ng "合体に失敗"
 }
@@ -241,8 +241,10 @@ cmd_watch() {
 
   # 録画中は別ディスクリプタで監視できないので、サイズの伸びと経過で見る
   local quiet=0 sec=0 prev=0 now
+  local t_start; t_start=$(date +%s)
   while kill -0 $rfpid 2>/dev/null; do
-    sleep 1; sec=$((sec+1))
+    sleep 1
+    sec=$(( $(date +%s) - t_start ))      # ループ1周は1秒より長いので実時刻で測る
     now=$(stat -c%s "$rf" 2>/dev/null || echo 0)
     # 直近1秒ぶんの末尾を読んで信号レベルを見る
     lv=$(tail -c 3000000 "$rf" 2>/dev/null | $VENV -c "
