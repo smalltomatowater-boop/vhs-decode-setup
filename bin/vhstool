@@ -16,6 +16,18 @@ ng() { printf '  \033[31m✗\033[0m %s\n' "$*"; }
 wn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 
 find_video() { ls /dev/video* 2>/dev/null | head -1; }
+free_dev() {
+  # 前のキャプチャが残っていると Device or resource busy になるので先に解放する
+  local v=$1
+  [ -n "$v" ] || return 0
+  fuser "$v" >/dev/null 2>&1 || return 0
+  wn "$v を掴んでいるプロセスがあるので終了させる"
+  fuser -k "$v" 2>/dev/null
+  sleep 2
+  fuser "$v" >/dev/null 2>&1 && { ng "$v を解放できなかった"; return 1; }
+  ok "$v を解放した"
+}
+
 setup_video() {
   # 収録前に毎回 入力端子と映像規格を設定する。
   # VHS_V4L_INPUT: 0=Composite 1=S-Video (既定 1)
@@ -54,11 +66,15 @@ cmd_check() {
   [ "$min" -lt 70 ] && wn "2時間テープには足りない。--flac を使うか古いファイルを消して"
 
   c "=== RF信号レベル（3秒） ==="
+  free_dev "$CXDEV" >/dev/null 2>&1
   timeout 3 cat $CXDEV > /tmp/_lv.u8 2>/dev/null
   $VENV - <<'PY'
 import numpy as np
 x = np.fromfile('/tmp/_lv.u8', dtype=np.uint8)
-x = x[len(x)//4:len(x)//4+6_000_000]
+if x.size < 100_000:
+    print("  \033[31mデータを読めなかった。デバイスが他のプロセスに使われている可能性\033[0m")
+    raise SystemExit
+x = x[x.size//4 : x.size//4 + 6_000_000]
 sd, c0, c1 = x.std(), (x==0).mean()*100, (x==255).mean()*100
 print(f"  標準偏差 {sd:.2f}  クリップ {c0+c1:.4f}%")
 if sd < 5:      print("  \033[31m信号が弱い。デッキは再生中？\033[0m")
@@ -82,11 +98,15 @@ cmd_rec() {
   [ -n "$v" ] && echo "  参照 → $ref  ($v + $a)" || wn "映像キャプチャ無し。RFのみ収録する"
 
   local rfpid refpid
+  free_dev "$v"; free_dev "$CXDEV"
   setup_video "$v"
   if [ -n "$v" ]; then
+    # -fps_mode cfr で等間隔出力を保証する。デバイスがフレームを落としても
+    # フレーム番号と時刻の対応が崩れず、相互相関での同期計算が成立する
     ffmpeg -nostdin -v error -y \
-      -f v4l2 -thread_queue_size 512 -i "$v" \
+      -f v4l2 -framerate 30000/1001 -thread_queue_size 512 -i "$v" \
       -f alsa -thread_queue_size 512 -i "$a" \
+      -fps_mode cfr -r 30000/1001 \
       -c:v libx264 -preset ultrafast -crf 26 -c:a flac "$ref" &
     refpid=$!
     # ffmpegが実際に書き始めるまで待つ（起動遅延を吸収）
@@ -195,11 +215,15 @@ cmd_watch() {
   mkdir -p "$WORK/$name"
   local rf="$WORK/$name/rf.u8" ref="$WORK/$name/ref.mkv" meta="$WORK/$name/meta.json"
   local rfpid refpid=""
+  free_dev "$v"; free_dev "$CXDEV"
   setup_video "$v"
   if [ -n "$v" ]; then
+    # -fps_mode cfr で等間隔出力を保証する。デバイスがフレームを落としても
+    # フレーム番号と時刻の対応が崩れず、相互相関での同期計算が成立する
     ffmpeg -nostdin -v error -y \
-      -f v4l2 -thread_queue_size 512 -i "$v" \
+      -f v4l2 -framerate 30000/1001 -thread_queue_size 512 -i "$v" \
       -f alsa -thread_queue_size 512 -i "$a" \
+      -fps_mode cfr -r 30000/1001 \
       -c:v libx264 -preset ultrafast -crf 26 -c:a flac "$ref" &
     refpid=$!
     for _ in $(seq 100); do [ -s "$ref" ] && break; sleep 0.05; done
@@ -245,6 +269,20 @@ print(f'{x.std():.2f}' if x.size>1000 else '0')
   cmd_build "$name"
 }
 
+cmd_clean() {
+  local name=$1 d="$WORK/$1"
+  [ -d "$d" ] || { ng "$d が無い"; return 1; }
+  [ -f "$d/$name.mkv" ] || { ng "完成品 $name.mkv がまだ無い。消すのは完成してから"; return 1; }
+  c "=== 中間ファイルの削除: $name ==="
+  echo "  残すもの: $name.mkv（完成品） / rf.u8（再デコード用のマスター） / ref.mkv / meta.json"
+  local before; before=$(du -sm "$d" | cut -f1)
+  rm -f "$d"/dec.tbc "$d"/dec_chroma.tbc "$d"/dec.tbc.json "$d"/dec.log "$d"/video.mkv
+  local after; after=$(du -sm "$d" | cut -f1)
+  ok "$((before-after)) MB 解放（$before MB → $after MB）"
+  echo "  ※ TBCは rf.u8 からいつでも作り直せる（ただし実時間の11倍かかる）"
+  echo "  ※ rf.u8 も消すなら: rm $d/rf.u8"
+}
+
 cmd_list() {
   c "=== 収録一覧 ($WORK) ==="
   printf '  %-18s %8s %8s %8s  %s\n' 名前 RF 参照 完成品 更新
@@ -269,6 +307,7 @@ vhstool - VHSのRF+通常キャプチャ自動化
   vhstool build 名前        デコード→カラー化→音声合体
   vhstool auto 名前 [秒]    rec と build を続けて実行
   vhstool watch [名前]      信号を待ち受け、再生を検出したら自動で収録＆仕上げ
+  vhstool clean 名前        中間ファイル(TBC等)を削除。完成品とrf.u8は残す
   vhstool list             収録一覧
 
   例:  vhstool auto tape01 7200     2時間録って自動で仕上げる
@@ -286,6 +325,7 @@ case "${1:-}" in
   watch) cmd_watch "${2:-}" ;;
   build) cmd_build "${2:?名前が必要}" ;;
   auto)  cmd_rec "${2:?名前が必要}" "${3:-}" && cmd_build "$2" ;;
+  clean) cmd_clean "${2:?名前が必要}" ;;
   list)  cmd_list ;;
   *)     usage ;;
 esac
