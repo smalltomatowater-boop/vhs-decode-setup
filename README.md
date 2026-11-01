@@ -4,7 +4,44 @@ VHSテープを **RF信号から直接デコード** する環境の構築記録
 
 2011年製の中古PCに Ubuntu 24.04 を入れ、CXカードで生のFM信号を吸い出し、
 `vhs-decode` でカラー映像まで復元するまでの全手順。
-素直に進まなかった箇所（ビルドの壁 6個）をすべて記録してある。
+
+---
+
+## このリポジトリ固有の中身
+
+デコード本体は上流（[cxadc](https://github.com/happycube/cxadc-linux3) /
+[vhs-decode](https://github.com/oyvindln/vhs-decode) /
+[tbc-tools](https://github.com/harrypm/tbc-tools)）の成果。
+ここにしか無いのは次の2つ。
+
+### 1. 再生ボタンを押すだけで完結する収録
+
+```sh
+vhstool watch tape01
+```
+
+RFレベルを1秒ごとに監視し、**信号を検出したら自動で収録を開始**、
+**テープが終われば自動で停止**して、そのままデコード・カラー化・
+音声合体・NAS転送まで走る。人間の操作は再生ボタンだけ。
+
+収録と同時に通常のキャプチャ（映像＋音声）も回し、
+**2つの映像を相互相関で突き合わせて音声を同期**させる。
+
+### 2. GV-USB2 を新しいカーネルで動かすパッチ
+
+I-O DATA GV-USB2（日本で広く出回っているアナログキャプチャ）は、
+現行カーネルではビルドも動作もしない。
+
+| 症状 | 原因 |
+|---|---|
+| `'const struct vb2_ops' has no member named 'wait_prepare'` | Linux 6.10 で vb2 のコールバックが削除された |
+| `urb submit failed (-11)` / `swiotlb buffer is full (sz: 786432 bytes)` | **USB帯域不足ではない。** swiotlb の1回あたり上限 256KB を超える DMA 要求 |
+
+後者は **EHCI（USB2.0世代）× メモリ4GB超 × IOMMU無し** でのみ発生する。
+VHSデジタル化のために古いPCを用意すると踏みやすい組み合わせ。
+
+→ [`patches/`](patches/) ／ 上流への報告文は
+[`docs/upstream-report-gvusb2.md`](docs/upstream-report-gvusb2.md)
 
 ---
 
@@ -326,3 +363,32 @@ HR-S7500 / HR-S2912I / HR3800U / SR-MV45 いずれも同じ。JVCの標準配置
 - [vhs-decode](https://github.com/oyvindln/vhs-decode) — GPLv3
 - [tbc-tools](https://github.com/harrypm/tbc-tools) — GPLv3
 - [GV-USB2-Linux](https://github.com/harrypm/GV-USB2-Linux) — GPLv2
+
+---
+
+## English summary
+
+Tooling and patches for capturing VHS tapes via RF (software decoding with
+`vhs-decode`) on a 2011-era PC running Ubuntu 24.04 / kernel 7.0.
+
+Two things here are not available upstream:
+
+**Signal-triggered capture.** `vhstool watch` polls the cxadc RF level, starts
+recording when playback is detected, stops when the tape ends, then decodes,
+colourises, muxes lossless audio from a parallel reference capture (aligned by
+cross-correlating the two video streams) and copies the result to a NAS.
+
+**GV-USB2 (I-O DATA, em28xx-incompatible) on current kernels.** Two patches:
+
+- Linux 6.10+ removed `wait_prepare` / `wait_finish` from `struct vb2_ops`,
+  breaking the build. The driver already sets `q->lock`, so the callbacks are
+  simply dropped.
+- `urb submit failed (-11)` together with
+  `swiotlb buffer is full (sz: 786432 bytes)` is **not** a USB bandwidth
+  problem. On EHCI hosts with more than 4GB of RAM and no IOMMU, DMA goes
+  through swiotlb bounce buffers, where a single mapping cannot exceed 256KB.
+  The driver requested `0x100 packets * 0xc00 bytes = 786432 bytes`. Reducing
+  packets per URB to `0x40` (and doubling the URB count) fixes it.
+
+See [`patches/`](patches/) and
+[`docs/upstream-report-gvusb2.md`](docs/upstream-report-gvusb2.md).
