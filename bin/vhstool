@@ -9,6 +9,7 @@ PATH="$HOME/.local/bin:$BIN:$PATH"
 CXDEV=/dev/cxadc0
 RFRATE=28.636363
 PARAMS=/sys/class/cxadc/cxadc0/device/parameters
+NAS="${VHS_NAS_DIR:-/mnt/nas/VHS_RF}"   # 完成品の置き場。off にすると転送しない
 
 c()  { printf '\033[1;36m%s\033[0m\n' "$*"; }
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -183,7 +184,9 @@ cmd_build() {
     -af "asetrate=$rate,aresample=48000:resampler=soxr" \
     -c:v copy -c:a flac -compression_level 8 \
     -shortest "$d/$name.mkv"
-  [ -f "$d/$name.mkv" ] && ok "完成 → $d/$name.mkv  ($(du -h "$d/$name.mkv" | cut -f1))" || ng "合体に失敗"
+  [ -f "$d/$name.mkv" ] || { ng "合体に失敗"; return 1; }
+  ok "完成 → $d/$name.mkv  ($(du -h "$d/$name.mkv" | cut -f1))"
+  cmd_push "$name" || wn "転送は後で vhstool push $name を実行すること"
 }
 
 cmd_watch() {
@@ -271,18 +274,52 @@ print(f'{x.std():.2f}' if x.size>1000 else '0')
   cmd_build "$name"
 }
 
+cmd_push() {
+  local name=$1 src="$WORK/$1/$1.mkv"
+  [ "$NAS" = "off" ] && { wn "VHS_NAS_DIR=off なので転送しない"; return 0; }
+  [ -f "$src" ] || { ng "完成品 $src が無い"; return 1; }
+  mkdir -p "$NAS" 2>/dev/null
+  [ -d "$NAS" ] || { ng "$NAS が見えない（NASがマウントされていない）"; return 1; }
+  local sz; sz=$(stat -c%s "$src")
+  c "=== NASへ転送: $name ==="
+  echo "  $src  ($(( sz / 1048576 )) MB)"
+  echo "  → $NAS/$name.mkv"
+  if command -v rsync >/dev/null; then
+    rsync -h --inplace "$src" "$NAS/$name.mkv"
+  else
+    cp "$src" "$NAS/$name.mkv"
+  fi
+  local dsz; dsz=$(stat -c%s "$NAS/$name.mkv" 2>/dev/null || echo 0)
+  if [ "$dsz" = "$sz" ]; then
+    ok "転送完了（サイズ一致 $sz バイト）"
+  else
+    ng "サイズが合わない（元 $sz / 先 $dsz）"; return 1
+  fi
+}
+
 cmd_clean() {
-  local name=$1 d="$WORK/$1"
+  local name=$1 mode=${2:-tbc} d="$WORK/$1"
   [ -d "$d" ] || { ng "$d が無い"; return 1; }
   [ -f "$d/$name.mkv" ] || { ng "完成品 $name.mkv がまだ無い。消すのは完成してから"; return 1; }
-  c "=== 中間ファイルの削除: $name ==="
-  echo "  残すもの: $name.mkv（完成品） / rf.u8（再デコード用のマスター） / ref.mkv / meta.json"
   local before; before=$(du -sm "$d" | cut -f1)
+  c "=== 不要ファイルの削除: $name ==="
   rm -f "$d"/dec.tbc "$d"/dec_chroma.tbc "$d"/dec.tbc.json "$d"/dec.log "$d"/video.mkv
+  if [ "$mode" = "all" ]; then
+    local ok_nas=0
+    if [ "$NAS" != "off" ] && [ -f "$NAS/$name.mkv" ]; then
+      [ "$(stat -c%s "$NAS/$name.mkv")" = "$(stat -c%s "$d/$name.mkv")" ] && ok_nas=1
+    fi
+    if [ "$ok_nas" = "1" ]; then
+      rm -f "$d"/rf.u8 "$d"/ref.mkv
+      echo "  rf.u8 と ref.mkv も削除（NAS上の完成品をサイズ照合して確認済み）"
+    else
+      wn "NAS上に完成品が無いかサイズが一致しない。rf.u8 は残した"
+    fi
+  else
+    echo "  残したもの: $name.mkv / rf.u8 / ref.mkv / meta.json"
+  fi
   local after; after=$(du -sm "$d" | cut -f1)
   ok "$((before-after)) MB 解放（$before MB → $after MB）"
-  echo "  ※ TBCは rf.u8 からいつでも作り直せる（ただし実時間の11倍かかる）"
-  echo "  ※ rf.u8 も消すなら: rm $d/rf.u8"
 }
 
 cmd_list() {
@@ -309,7 +346,9 @@ vhstool - VHSのRF+通常キャプチャ自動化
   vhstool build 名前        デコード→カラー化→音声合体
   vhstool auto 名前 [秒]    rec と build を続けて実行
   vhstool watch [名前]      信号を待ち受け、再生を検出したら自動で収録＆仕上げ
+  vhstool push 名前         完成品をNASへ転送（buildの最後に自動実行される）
   vhstool clean 名前        中間ファイル(TBC等)を削除。完成品とrf.u8は残す
+  vhstool clean 名前 all    NAS転送済みを確認した上で rf.u8 も削除
   vhstool list             収録一覧
 
   例:  vhstool auto tape01 7200     2時間録って自動で仕上げる
@@ -318,6 +357,7 @@ vhstool - VHSのRF+通常キャプチャ自動化
   環境変数:
     VHS_THRESHOLD(既定6.0) VHS_ON_COUNT(3) VHS_OFF_COUNT(15)
     VHS_V4L_INPUT(既定1=S-Video, 0=Composite) VHS_V4L_STANDARD(既定ntsc)
+    VHS_NAS_DIR(既定 /mnt/nas/VHS_RF, off で転送しない)
 U
 }
 
@@ -327,7 +367,8 @@ case "${1:-}" in
   watch) cmd_watch "${2:-}" ;;
   build) cmd_build "${2:?名前が必要}" ;;
   auto)  cmd_rec "${2:?名前が必要}" "${3:-}" && cmd_build "$2" ;;
-  clean) cmd_clean "${2:?名前が必要}" ;;
+  push)  cmd_push  "${2:?名前が必要}" ;;
+  clean) cmd_clean "${2:?名前が必要}" "${3:-}" ;;
   list)  cmd_list ;;
   *)     usage ;;
 esac
