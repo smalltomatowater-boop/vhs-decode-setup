@@ -1,0 +1,9 @@
+KERNEL=="cxadc*", GROUP="video"
+
+# VHS RF capture 設定（2026-11-01 実測で決定）
+#   vmux=2   信号が来ている入力
+#   level=24 + sixdb=1  → 100IRE超え 1.49% / 天井張付き 0.88% で最良
+KERNEL=="cxadc0", SUBSYSTEM=="cxadc", \
+  ATTR{device/parameters/vmux}="2", \
+  ATTR{device/parameters/level}="24", \
+  ATTR{device/parameters/sixdb}="1"

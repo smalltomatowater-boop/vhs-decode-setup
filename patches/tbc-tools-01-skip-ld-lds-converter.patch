@@ -1,0 +1,12 @@
+--- CMakeLists.txt.orig	2026-11-01 20:40:49.931286249 +0900
++++ CMakeLists.txt	2026-11-01 20:40:49.932092915 +0900
+@@ -375,7 +375,8 @@
+ add_subdirectory(src/tbc-export-metadata)
+ add_subdirectory(src/tbc-metadata-converter)
+ add_subdirectory(src/audio-align)
+-add_subdirectory(src/ld-lds-converter)
++# [local patch] flac>=1.5.0 が Ubuntu 24.04 に無いため除外。LaserDisc .lds 変換専用で他は依存しない
++#add_subdirectory(src/ld-lds-converter)
+ add_subdirectory(src/tbc-process-vbi)
+ add_subdirectory(src/ac3-decoder)
+ add_subdirectory(src/library)

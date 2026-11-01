@@ -1,0 +1,278 @@
+#!/bin/bash
+# vhstool - VHSのRFキャプチャと通常キャプチャを合体させる自動化ツール
+set -uo pipefail
+
+WORK=/mnt/rf
+BIN=$HOME/src/tbc-tools/build/bin
+VENV=$HOME/.local/share/pipx/venvs/vhs-decode/bin/python
+PATH="$HOME/.local/bin:$BIN:$PATH"
+CXDEV=/dev/cxadc0
+RFRATE=28.636363
+PARAMS=/sys/class/cxadc/cxadc0/device/parameters
+
+c()  { printf '\033[1;36m%s\033[0m\n' "$*"; }
+ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+ng() { printf '  \033[31m✗\033[0m %s\n' "$*"; }
+wn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+
+find_video() { ls /dev/video* 2>/dev/null | head -1; }
+find_audio() {
+  # PCH(マザボ)以外のキャプチャカードを優先、無ければPCHのライン入力
+  local n
+  n=$(arecord -l 2>/dev/null | grep -oP '^(カード|card)\s+\K[0-9]+(?=.*)' | while read -r i; do
+        grep -qi 'pch\|hda intel' <(arecord -l | grep -E "^(カード|card) +$i:") || echo "$i"
+      done | head -1)
+  [ -n "${n:-}" ] && { echo "plughw:$n,0"; return; }
+  echo "plughw:0,0"
+}
+
+cmd_check() {
+  c "=== 環境チェック ==="
+  [ -c $CXDEV ] && ok "RFキャプチャ $CXDEV" || { ng "$CXDEV が無い（cxadc未ロード）"; return 1; }
+  printf '    設定: '; for f in vmux level sixdb tenbit; do printf '%s=%s ' "$f" "$(cat $PARAMS/$f)"; done; echo
+
+  local v; v=$(find_video)
+  [ -n "$v" ] && { ok "映像キャプチャ $v"
+    v4l2-ctl -d "$v" --list-formats 2>/dev/null | grep -oP "\[\d+\]: '\K[^']+" | tr '\n' ' ' | sed 's/^/    対応形式: /'; echo
+  } || ng "USBキャプチャが見つからない（挿してる？）"
+
+  local a; a=$(find_audio); ok "音声入力 $a"
+
+  local avail min
+  avail=$(df --output=avail -k "$WORK" | tail -1)
+  min=$(( avail / 1024 / 28 / 60 ))
+  ok "空き $(df -h "$WORK" | awk 'NR==2{print $4}') → 無圧縮で約 ${min} 分"
+  [ "$min" -lt 70 ] && wn "2時間テープには足りない。--flac を使うか古いファイルを消して"
+
+  c "=== RF信号レベル（3秒） ==="
+  timeout 3 cat $CXDEV > /tmp/_lv.u8 2>/dev/null
+  $VENV - <<'PY'
+import numpy as np
+x = np.fromfile('/tmp/_lv.u8', dtype=np.uint8)
+x = x[len(x)//4:len(x)//4+6_000_000]
+sd, c0, c1 = x.std(), (x==0).mean()*100, (x==255).mean()*100
+print(f"  標準偏差 {sd:.2f}  クリップ {c0+c1:.4f}%")
+if sd < 5:      print("  \033[31m信号が弱い。デッキは再生中？\033[0m")
+elif c0+c1>0.1: print("  \033[33mクリップ過多。level を下げて\033[0m")
+else:           print("  \033[32m良好\033[0m")
+PY
+  rm -f /tmp/_lv.u8
+}
+
+cmd_rec() {
+  local name=$1 dur=${2:-}
+  local v a; v=$(find_video); a=$(find_audio)
+  [ -c $CXDEV ] || { ng "$CXDEV が無い"; return 1; }
+
+  mkdir -p "$WORK/$name"
+  local rf="$WORK/$name/rf.u8" ref="$WORK/$name/ref.mkv" meta="$WORK/$name/meta.json"
+
+  c "=== 収録開始: $name ==="
+  [ -n "$dur" ] && echo "  長さ: ${dur}秒" || echo "  長さ: Ctrl-C で停止"
+  echo "  RF   → $rf"
+  [ -n "$v" ] && echo "  参照 → $ref  ($v + $a)" || wn "映像キャプチャ無し。RFのみ収録する"
+
+  local rfpid refpid
+  if [ -n "$v" ]; then
+    ffmpeg -nostdin -v error -y \
+      -f v4l2 -thread_queue_size 512 -i "$v" \
+      -f alsa -thread_queue_size 512 -i "$a" \
+      -c:v libx264 -preset ultrafast -crf 26 -c:a flac "$ref" &
+    refpid=$!
+    # ffmpegが実際に書き始めるまで待つ（起動遅延を吸収）
+    for _ in $(seq 100); do [ -s "$ref" ] && break; sleep 0.05; done
+  fi
+  local t0; t0=$(date +%s.%N)
+  cat $CXDEV > "$rf" & rfpid=$!
+
+  stop() {
+    echo; c "停止中..."
+    kill -INT ${refpid:-0} 2>/dev/null
+    kill ${rfpid:-0} 2>/dev/null
+    wait ${rfpid:-0} ${refpid:-0} 2>/dev/null
+  }
+  trap stop INT TERM
+
+  if [ -n "$dur" ]; then
+    local i=0
+    while [ $i -lt "$dur" ] && kill -0 $rfpid 2>/dev/null; do
+      sleep 1; i=$((i+1))
+      printf '\r  録画中 %4d/%s 秒   RF %6d MB' "$i" "$dur" "$(( $(stat -c%s "$rf" 2>/dev/null || echo 0) / 1048576 ))"
+    done
+    echo; stop
+  else
+    wait $rfpid
+    stop
+  fi
+  trap - INT TERM
+
+  printf '{"name":"%s","t0":%s,"rf_rate":%s,"video_dev":"%s","audio_dev":"%s","vmux":%s,"level":%s,"sixdb":%s}\n' \
+    "$name" "$t0" "$RFRATE" "${v:-none}" "$a" "$(cat $PARAMS/vmux)" "$(cat $PARAMS/level)" "$(cat $PARAMS/sixdb)" > "$meta"
+
+  ok "RF   $(du -h "$rf" | cut -f1)"
+  [ -f "$ref" ] && ok "参照 $(du -h "$ref" | cut -f1)"
+}
+
+cmd_build() {
+  local name=$1
+  local d="$WORK/$name"
+  local rf="$d/rf.u8" ref="$d/ref.mkv"
+  [ -f "$rf" ] || { ng "$rf が無い"; return 1; }
+
+  c "=== 1/4 RFをデコード ==="
+  vhs-decode --tf VHS --system NTSC -f $RFRATE -t "$(nproc)" --overwrite "$rf" "$d/dec" 2>&1 \
+    | grep -E 'Took|Completed' | sed 's/^/  /'
+  [ -f "$d/dec.tbc" ] || { ng "デコード失敗"; return 1; }
+
+  c "=== 2/4 カラー化して書き出し ==="
+  rm -f "$d/video.mkv"
+  "$BIN/tbc-video-export" --threads "$(nproc)" --chroma-decoder ntsc3d "$d/dec.tbc" "$d/video" 2>&1 \
+    | grep -iE 'export finished|error' | sed 's/^/  /'
+  [ -f "$d/video.mkv" ] || { ng "書き出し失敗"; return 1; }
+  ok "映像 $(du -h "$d/video.mkv" | cut -f1)"
+
+  if [ ! -f "$ref" ]; then
+    wn "参照キャプチャが無いので音声なしで完成"
+    cp "$d/video.mkv" "$d/$name.mkv"; ok "$d/$name.mkv"; return 0
+  fi
+
+  c "=== 3/4 映像を突き合わせて同期を計算 ==="
+  $VENV "$HOME/bin/vhsalign.py" "$d/video.mkv" "$ref" || { ng "同期計算に失敗"; return 1; }
+
+  c "=== 4/4 音声を合体 ==="
+  local off drift conf
+  off=$($VENV -c "import json;print(json.load(open('/tmp/vhsalign.json'))['offset_sec'])")
+  drift=$($VENV -c "import json;print(json.load(open('/tmp/vhsalign.json'))['drift'])")
+  conf=$($VENV -c "import json;print(json.load(open('/tmp/vhsalign.json'))['confidence'])")
+  [ "$conf" = "低い" ] && wn "同期の信頼度が低い。できた動画の音ズレを確認して"
+
+  local rate; rate=$($VENV -c "print(48000*$drift)")
+  ffmpeg -nostdin -v error -y \
+    -i "$d/video.mkv" -itsoffset "$off" -i "$ref" \
+    -map 0:v -map 1:a \
+    -af "asetrate=$rate,aresample=48000:resampler=soxr" \
+    -c:v copy -c:a aac -b:a 192k \
+    -shortest "$d/$name.mkv"
+  [ -f "$d/$name.mkv" ] && ok "完成 → $d/$name.mkv  ($(du -h "$d/$name.mkv" | cut -f1))" || ng "合体に失敗"
+}
+
+cmd_watch() {
+  local name=${1:-$(date +tape_%Y%m%d_%H%M)}
+  local TH=${VHS_THRESHOLD:-6.0}      # 信号ありと判定する標準偏差
+  local ON=${VHS_ON_COUNT:-3}         # 何回連続で検出したら録画開始するか
+  local OFF=${VHS_OFF_COUNT:-15}      # 何回連続で無信号なら停止するか
+
+  c "=== 信号待ち受けモード ==="
+  echo "  名前     : $name"
+  echo "  しきい値 : 標準偏差 $TH 以上を「信号あり」とみなす"
+  echo "  開始条件 : ${ON}回連続で検出"
+  echo "  停止条件 : ${OFF}回連続で無信号（約${OFF}秒）"
+  echo "  デッキの再生ボタンを押せば自動で始まる。Ctrl-C で待ち受け自体を終了。"
+  echo
+
+  local hit=0 lv
+  while true; do
+    lv=$($VENV "$HOME/bin/vhslevel.py" "$TH"); local rc=$?
+    if [ $rc -eq 0 ]; then hit=$((hit+1)); else hit=0; fi
+    printf '\r  待機中... レベル %-6s 連続検出 %d/%d ' "$lv" "$hit" "$ON"
+    [ $hit -ge "$ON" ] && break
+    sleep 1
+  done
+  echo; ok "信号を検出。収録を開始する"
+
+  # --- 収録開始（cmd_rec と同じ構成だが、無信号で自動停止する） ---
+  local v a; v=$(find_video); a=$(find_audio)
+  mkdir -p "$WORK/$name"
+  local rf="$WORK/$name/rf.u8" ref="$WORK/$name/ref.mkv" meta="$WORK/$name/meta.json"
+  local rfpid refpid=""
+  if [ -n "$v" ]; then
+    ffmpeg -nostdin -v error -y \
+      -f v4l2 -thread_queue_size 512 -i "$v" \
+      -f alsa -thread_queue_size 512 -i "$a" \
+      -c:v libx264 -preset ultrafast -crf 26 -c:a flac "$ref" &
+    refpid=$!
+    for _ in $(seq 100); do [ -s "$ref" ] && break; sleep 0.05; done
+  fi
+  local t0; t0=$(date +%s.%N)
+  cat $CXDEV > "$rf" & rfpid=$!
+
+  stopall() {
+    echo; c "停止中..."
+    [ -n "$refpid" ] && kill -INT $refpid 2>/dev/null
+    kill $rfpid 2>/dev/null
+    wait $rfpid ${refpid:-} 2>/dev/null
+  }
+  trap 'stopall; exit 130' INT TERM
+
+  # 録画中は別ディスクリプタで監視できないので、サイズの伸びと経過で見る
+  local quiet=0 sec=0 prev=0 now
+  while kill -0 $rfpid 2>/dev/null; do
+    sleep 1; sec=$((sec+1))
+    now=$(stat -c%s "$rf" 2>/dev/null || echo 0)
+    # 直近1秒ぶんの末尾を読んで信号レベルを見る
+    lv=$(tail -c 3000000 "$rf" 2>/dev/null | $VENV -c "
+import sys,numpy as np
+b=sys.stdin.buffer.read()
+x=np.frombuffer(b,dtype=np.uint8)
+print(f'{x.std():.2f}' if x.size>1000 else '0')
+")
+    if [ "$(echo "$lv < $TH" | bc -l)" = "1" ]; then quiet=$((quiet+1)); else quiet=0; fi
+    printf '\r  録画中 %5d秒  %6d MB  レベル %-6s 無信号 %d/%d ' \
+      "$sec" "$(( now / 1048576 ))" "$lv" "$quiet" "$OFF"
+    if [ $quiet -ge "$OFF" ]; then echo; wn "無信号が続いたので停止する"; break; fi
+    prev=$now
+  done
+  stopall
+  trap - INT TERM
+
+  printf '{"name":"%s","t0":%s,"rf_rate":%s,"video_dev":"%s","audio_dev":"%s","auto":true}\n' \
+    "$name" "$t0" "$RFRATE" "${v:-none}" "$a" > "$meta"
+  ok "RF   $(du -h "$rf" | cut -f1)"
+  [ -f "$ref" ] && ok "参照 $(du -h "$ref" | cut -f1)"
+
+  c "=== 仕上げに入る ==="
+  cmd_build "$name"
+}
+
+cmd_list() {
+  c "=== 収録一覧 ($WORK) ==="
+  printf '  %-18s %8s %8s %8s  %s\n' 名前 RF 参照 完成品 更新
+  for d in "$WORK"/*/; do
+    [ -d "$d" ] || continue
+    local n; n=$(basename "$d")
+    printf '  %-18s %8s %8s %8s  %s\n' "$n" \
+      "$([ -f "$d/rf.u8" ] && du -h "$d/rf.u8" | cut -f1 || echo -)" \
+      "$([ -f "$d/ref.mkv" ] && du -h "$d/ref.mkv" | cut -f1 || echo -)" \
+      "$([ -f "$d/$n.mkv" ] && du -h "$d/$n.mkv" | cut -f1 || echo -)" \
+      "$(date -r "$d" '+%m/%d %H:%M')"
+  done
+  echo; df -h "$WORK" | awk 'NR==2{print "  空き: "$4" / "$2}'
+}
+
+usage() {
+cat <<'U'
+vhstool - VHSのRF+通常キャプチャ自動化
+
+  vhstool check            環境チェック（デバイス・空き容量・信号レベル）
+  vhstool rec 名前 [秒]     RFと参照キャプチャを同時収録（秒を省略するとCtrl-Cまで）
+  vhstool build 名前        デコード→カラー化→音声合体
+  vhstool auto 名前 [秒]    rec と build を続けて実行
+  vhstool watch [名前]      信号を待ち受け、再生を検出したら自動で収録＆仕上げ
+  vhstool list             収録一覧
+
+  例:  vhstool auto tape01 7200     2時間録って自動で仕上げる
+       vhstool watch tape01         再生ボタンを押すまで待ち、終わったら自動で仕上げる
+
+  環境変数:  VHS_THRESHOLD(既定6.0) VHS_ON_COUNT(3) VHS_OFF_COUNT(15)
+U
+}
+
+case "${1:-}" in
+  check) cmd_check ;;
+  rec)   cmd_rec "${2:?名前が必要}" "${3:-}" ;;
+  watch) cmd_watch "${2:-}" ;;
+  build) cmd_build "${2:?名前が必要}" ;;
+  auto)  cmd_rec "${2:?名前が必要}" "${3:-}" && cmd_build "$2" ;;
+  list)  cmd_list ;;
+  *)     usage ;;
+esac

@@ -1,0 +1,19 @@
+--- gvusb2.h.orig	2026-11-01 22:08:26.452272453 +0900
++++ gvusb2.h	2026-11-01 22:08:26.476136475 +0900
+@@ -15,8 +15,14 @@
+ 
+ #include <linux/module.h>
+ 
+-#define GVUSB2_NUM_URBS 4
+-#define GVUSB2_NUM_ISOCH_PACKETS 0x100
++/* [local patch] EHCI + 4GB超メモリ + IOMMU無しの環境では DMA が swiotlb 経由に
++ * なる。swiotlb の1回あたり上限は 256KB だが、元の値では
++ *   0x100 packets * 0xc00 bytes = 786432 bytes
++ * を要求して "swiotlb buffer is full" → urb submit failed (-11) になる。
++ * パケット数を 1/4 にして 0x40 * 0xc00 = 196608 bytes に収め、
++ * 減ったバッファ量は URB 数を倍にして補う。 */
++#define GVUSB2_NUM_URBS 8
++#define GVUSB2_NUM_ISOCH_PACKETS 0x40
+ #define GVUSB2_MAX_AUDIO_PACKET_SIZE 0x100
+ #define GVUSB2_MAX_VIDEO_PACKET_SIZE 0xc00
+ #define GVUSB2_VENDOR_ID  0x04bb
