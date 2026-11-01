@@ -176,7 +176,19 @@ vhstool list             収録一覧
 ```sh
 VHS_THRESHOLD=4.0 vhstool watch tape01   # 検出感度
 VHS_OFF_COUNT=30  vhstool watch tape01   # 停止までの無信号秒数
+VHS_V4L_INPUT=0   vhstool rec tape01 60  # 0=Composite 1=S-Video（既定1）
 ```
+
+収録のたびに入力端子と映像規格を設定し直すようにしてある。
+挿し替えても `vhstool` 側の設定は不要。
+
+### インターレースの扱い
+
+RF側は `tbc-video-export` が FFV1 でインターレースのまま保持する（`tff`）。
+完成品も `-c:v copy` なのでそのまま。**デインターレースはしない。**
+
+保存用マスターは元の情報を捨てずに持ち、見せ方は再生ソフトに任せる。
+VLC や mpv は再生時にデインターレースする。
 
 ### 同期のしくみ
 

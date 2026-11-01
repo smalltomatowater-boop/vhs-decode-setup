@@ -16,6 +16,15 @@ ng() { printf '  \033[31m✗\033[0m %s\n' "$*"; }
 wn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 
 find_video() { ls /dev/video* 2>/dev/null | head -1; }
+setup_video() {
+  # 収録前に毎回 入力端子と映像規格を設定する。
+  # VHS_V4L_INPUT: 0=Composite 1=S-Video (既定 1)
+  local v=$1
+  [ -n "$v" ] || return 0
+  v4l2-ctl -d "$v" --set-input "${VHS_V4L_INPUT:-1}" >/dev/null 2>&1
+  v4l2-ctl -d "$v" --set-standard "${VHS_V4L_STANDARD:-ntsc}" >/dev/null 2>&1
+}
+
 find_audio() {
   # PCH(マザボ)以外のキャプチャカードを優先、無ければPCHのライン入力
   local n
@@ -32,7 +41,7 @@ cmd_check() {
   printf '    設定: '; for f in vmux level sixdb tenbit; do printf '%s=%s ' "$f" "$(cat $PARAMS/$f)"; done; echo
 
   local v; v=$(find_video)
-  [ -n "$v" ] && { ok "映像キャプチャ $v"
+  [ -n "$v" ] && { setup_video "$v"; ok "映像キャプチャ $v  入力=$(v4l2-ctl -d "$v" --get-input 2>/dev/null | grep -oP ": \\K.*" | head -1)"
     v4l2-ctl -d "$v" --list-formats 2>/dev/null | grep -oP "\[\d+\]: '\K[^']+" | tr '\n' ' ' | sed 's/^/    対応形式: /'; echo
   } || ng "USBキャプチャが見つからない（挿してる？）"
 
@@ -73,6 +82,7 @@ cmd_rec() {
   [ -n "$v" ] && echo "  参照 → $ref  ($v + $a)" || wn "映像キャプチャ無し。RFのみ収録する"
 
   local rfpid refpid
+  setup_video "$v"
   if [ -n "$v" ]; then
     ffmpeg -nostdin -v error -y \
       -f v4l2 -thread_queue_size 512 -i "$v" \
@@ -185,6 +195,7 @@ cmd_watch() {
   mkdir -p "$WORK/$name"
   local rf="$WORK/$name/rf.u8" ref="$WORK/$name/ref.mkv" meta="$WORK/$name/meta.json"
   local rfpid refpid=""
+  setup_video "$v"
   if [ -n "$v" ]; then
     ffmpeg -nostdin -v error -y \
       -f v4l2 -thread_queue_size 512 -i "$v" \
@@ -263,7 +274,9 @@ vhstool - VHSのRF+通常キャプチャ自動化
   例:  vhstool auto tape01 7200     2時間録って自動で仕上げる
        vhstool watch tape01         再生ボタンを押すまで待ち、終わったら自動で仕上げる
 
-  環境変数:  VHS_THRESHOLD(既定6.0) VHS_ON_COUNT(3) VHS_OFF_COUNT(15)
+  環境変数:
+    VHS_THRESHOLD(既定6.0) VHS_ON_COUNT(3) VHS_OFF_COUNT(15)
+    VHS_V4L_INPUT(既定1=S-Video, 0=Composite) VHS_V4L_STANDARD(既定ntsc)
 U
 }
 
