@@ -1,0 +1,106 @@
+#!/bin/bash
+# vhsverify <納品ファイル> [保存マスター]
+#
+# 納品物が仕様どおりに出来ているかを機械的に確かめる。
+# 人が目で見る検証(構造の消失・階調の保持)の代わりではなく、
+# 「設定ミスや事故で壊れたものを出荷しない」ための関門。
+#
+# マスターを第2引数に渡すと、音声波形の突き合わせまで行う。
+set -u
+F=${1:-}
+M=${2:-}
+[ -f "$F" ] || { echo "使い方: vhsverify <納品ファイル> [保存マスター]"; exit 2; }
+
+NG=0
+ok(){ printf '  \033[32m合格\033[0m %s\n' "$*"; }
+ng(){ printf '  \033[31m不合格\033[0m %s\n' "$*"; NG=$((NG+1)); }
+info(){ printf '       %s\n' "$*"; }
+q(){ ffprobe -v error "$@" 2>/dev/null; }
+# ffprobe の csv は指定順ではなくストリーム本来の順で出るため、
+# key=value で取り出して名前で引く。
+f(){ ffprobe -v error -select_streams "$1" -show_entries "stream=$2" \
+       -of default=nw=1:nk=0 "$F" 2>/dev/null | awk -F= -v k="$2" '$1==k{print $2; exit}'; }
+
+echo "=== $(basename "$F") ==="
+
+# --- 1. ストリーム構成 ---
+NV=$(q -select_streams v -show_entries stream=index -of csv=p=0 "$F" | grep -c .)
+NA=$(q -select_streams a -show_entries stream=index -of csv=p=0 "$F" | grep -c .)
+ND=$(q -select_streams d -show_entries stream=index -of csv=p=0 "$F" | grep -c .)
+[ "$NV" = 1 ] && ok "映像 1本" || ng "映像が ${NV} 本ある"
+[ "$NA" = 1 ] && ok "音声 1本" || ng "音声が ${NA} 本ある"
+[ "$ND" = 0 ] && ok "データトラック無し" || info "データトラック ${ND} 本（tmcd など。実害は確認されていない）"
+
+# --- 2. 映像の仕様 ---
+VC=$(f v:0 codec_name); PIX=$(f v:0 pix_fmt); RANGE=$(f v:0 color_range)
+W=$(f v:0 width); H=$(f v:0 height); FR=$(f v:0 r_frame_rate)
+[ "$VC" = h264 ]      && ok "H.264"               || ng "映像コーデックが ${VC}"
+[ "$PIX" = yuv420p ]  && ok "yuv420p"             || ng "画素形式が ${PIX}"
+[ "$RANGE" = tv ]     && ok "color_range=tv"      || ng "color_range が ${RANGE}（tv でないとプレーヤーが誤解釈する）"
+[ "$W" = 640 ] && [ "$H" = 480 ] && ok "640x480"  || ng "解像度が ${W}x${H}"
+[ "$FR" = "60000/1001" ] && ok "59.94 fps"        || ng "フレームレートが ${FR}"
+
+# --- 3. 音声の仕様 ---
+AC=$(f a:0 codec_name); SR=$(f a:0 sample_rate); CH=$(f a:0 channels)
+[ "$AC" = aac ] && ok "AAC"            || ng "音声コーデックが ${AC}"
+[ "$SR" = 48000 ] && ok "48000 Hz"     || ng "標本化周波数が ${SR}"
+[ "$CH" = 2 ] && ok "ステレオ"          || ng "チャンネル数が ${CH}"
+
+# --- 4. 長さと音声の頭出し ---
+VD=$(q -select_streams v:0 -show_entries stream=duration -of csv=p=0 "$F")
+AD=$(q -select_streams a:0 -show_entries stream=duration -of csv=p=0 "$F")
+AS=$(q -select_streams a:0 -show_entries stream=start_time -of csv=p=0 "$F")
+python3 - "$VD" "$AD" "$AS" <<'PY' && ok "長さと頭出し" || ng "長さまたは頭出しが仕様外"
+import sys
+v,a,s=(float(x) if x not in ("N/A","") else float('nan') for x in sys.argv[1:4])
+print(f"       映像 {v:.3f}s / 音声 {a:.3f}s / 音声開始 {s:+.3f}s")
+sys.exit(0 if abs(v-a)<1.0 and abs(s)<0.2 else 1)
+PY
+
+# --- 5. faststart ---
+python3 - "$F" <<'PY' && ok "faststart（moovが先頭）" || ng "faststart が効いていない"
+import struct,sys
+f=open(sys.argv[1],'rb'); pos=0
+for _ in range(8):
+    f.seek(pos); h=f.read(8)
+    if len(h)<8: sys.exit(1)
+    sz=struct.unpack('>I',h[:4])[0]; typ=h[4:8].decode('latin1','replace')
+    if typ=='moov': sys.exit(0)
+    if typ=='mdat': sys.exit(1)
+    pos+=sz if sz>1 else 16
+sys.exit(1)
+PY
+
+# --- 6. 全編を復号して破損が無いか ---
+ERR=$(ffmpeg -nostdin -v error -i "$F" -f null - 2>&1 | grep -c . || true)
+[ "$ERR" = 0 ] && ok "全編の復号でエラー無し" || ng "復号中に ${ERR} 件のエラー"
+
+# --- 7. マスターとの音声照合（任意） ---
+if [ -n "$M" ] && [ -f "$M" ]; then
+  python3 - "$M" "$F" <<'PY' && ok "マスターとの音声同期" || ng "マスターとの音声同期にずれ"
+import subprocess,sys,numpy as np
+def env(src,ss,dur=20):
+    o=subprocess.run(["ffmpeg","-nostdin","-v","error","-ss",str(ss),"-i",src,"-t",str(dur),
+        "-vn","-ac","1","-ar","4000","-f","f32le","-"],capture_output=True).stdout
+    return np.abs(np.frombuffer(o,'<f4').astype(np.float64))
+bad=0
+for t in (100,850,1600):
+    a=env(sys.argv[1],t); b=env(sys.argv[2],t)
+    n=min(len(a),len(b))
+    if n<4000: continue
+    a,b=a[:n],b[:n]; best=(0,-2)
+    for k in range(-1000,1001,4):
+        x=a[max(0,k):n+min(0,k)]; y=b[max(0,-k):n+min(0,-k)]
+        m=min(len(x),len(y)); xn=x[:m]-x[:m].mean(); yn=y[:m]-y[:m].mean()
+        d=np.sqrt((xn**2).sum()*(yn**2).sum())
+        c=(xn@yn)/d if d>1e-12 else 0
+        if c>best[1]: best=(k,c)
+    ms=best[0]/4.0
+    print(f"       {t:5d}秒  ずれ {ms:+7.1f} ms  相関 {best[1]:.4f}")
+    if abs(ms)>100 or best[1]<0.9: bad+=1
+sys.exit(1 if bad else 0)
+PY
+fi
+
+echo
+[ "$NG" = 0 ] && { echo "  総合: 合格"; exit 0; } || { echo "  総合: 不合格 ${NG} 件"; exit 1; }

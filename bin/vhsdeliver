@@ -1,0 +1,53 @@
+#!/bin/bash
+# vhsdeliver <名前> [プロファイル]
+#
+#   vhsdeliver tape01              標準版（standard-v1）
+#   vhsdeliver tape01 contrast-v1  コントラスト重視版
+#
+# 保存マスター 完成_<名前>.mkv から納品用 MP4 を作る。
+# マスターには一切触れない。
+#
+# パラメータは profiles/<プロファイル>.sh に凍結してある。ここでは変更しない。
+# 設定を変えたいときは新しいバージョンのプロファイルを作り、
+# docs/verify-standard-v1.md と同じ検証を通してから採用すること。
+# 毎回パラメータを触る運用にすると品質の再現性が失われる。
+set -uo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+REPO=$(dirname "$HERE")
+NAME=${1:-}
+PROF=${2:-standard-v1}
+NAS="${VHS_NAS_DIR:-/Volumes/home/VHS_RF}"
+
+[ -n "$NAME" ] || { echo "使い方: vhsdeliver <名前> [プロファイル]"; exit 2; }
+P="$REPO/profiles/$PROF.sh"
+[ -f "$P" ] || { echo "プロファイルが無い: $P"; exit 2; }
+# shellcheck source=/dev/null
+. "$P"
+
+SRC="$NAS/完成_$NAME.mkv"
+OUT="$NAS/納品_${PROFILE_LABEL}_$NAME.mp4"
+[ -f "$SRC" ] || { echo "保存マスターが無い: $SRC"; exit 1; }
+
+# マスターのレンジ表記を確認する。tbc-video-export の出力はフルレンジだが
+# タグが tv のまま出ることがあり、そのままだと変換が二重にかかる。
+RNG=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_range -of csv=p=0 "$SRC")
+if [ "$RNG" != "pc" ]; then
+  echo "警告: マスターの color_range が ${RNG} になっている。"
+  echo "      tbc-video-export の出力はフルレンジなので pc が正しい。"
+  echo "      mkvpropedit \"$SRC\" --edit track:v1 --set colour-range=2 で直せる（無劣化）。"
+  exit 1
+fi
+
+VF="$DEINTERLACE,$CROP"
+VF="$VF,lutyuv=y='clip((val-$BLACK)*1023/(1023-$BLACK),0,1023)'"
+VF="$VF,$NR,$SCALE"
+
+echo "=== $PROFILE_NAME（黒点 $BLACK）  $(date +%H:%M:%S) ==="
+echo "  入力 $SRC"
+echo "  出力 $OUT"
+ffmpeg -nostdin -v error -i "$SRC" -vf "$VF" \
+  "${VCODEC[@]}" "${VTAGS[@]}" "${ACODEC[@]}" "${MUXOPT[@]}" -y "$OUT" || { echo "書き出しに失敗"; exit 1; }
+echo "  $(du -h "$OUT" | cut -f1)  $(date +%H:%M:%S)"
+
+echo
+"$HERE/vhsverify" "$OUT" "$SRC"
