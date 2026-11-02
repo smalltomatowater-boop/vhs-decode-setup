@@ -1,0 +1,327 @@
+#!/bin/bash
+# vhsfinish - Mac側の仕上げ工程をひと息で通す
+#
+#   vhsfinish tape02              NAS上のRFから納品物まで通す（済んだ工程は飛ばす）
+#   vhsfinish tape02 --status     進捗だけ表示
+#   vhsfinish tape02 --from align align工程からやり直す
+#   vhsfinish tape02 --yes        同期の信頼度が低くても止まらない（非推奨）
+#
+# なぜMac側に要るか
+# ----------------
+# Ubuntu機は vhstool watch で収録から納品前まで全自動だが、搭載メモリに
+# 不良があり、書き出し時に静かにビットを壊す（同一ファイルの3回読みで
+# CRC不一致の位置が毎回変わる。実際に tape01.mkv を19か所焼き付けて失った）。
+# そのためUbuntuは収録とデコードまでに留め、書き出し以降はMacで行う運用に
+# した。その「以降」が手作業のままだったので、ここで繋ぐ。
+#
+# 工程ごとに $WORK/.state に完了マーカーを置く。落ちても途中から再開でき、
+# 数時間かかるデコードをやり直す事故を防ぐ。
+#
+# マスターは上書きしない。完成_<名前>.mkv が既にあれば必ず止まる。
+set -uo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+REPO=$(dirname "$HERE")
+BIN=$HOME/src/tbc-tools/build/bin
+# $BIN を先に置く。~/.local/bin には古い tbc-video-export 0.1.8 が残っていて、
+# これは旧名 ld-dropout-correct を探すため必ず失敗する。
+PATH="$BIN:$HOME/.local/bin:$PATH"
+
+NAS="${VHS_NAS_DIR:-/Volumes/home/VHS_RF}"
+PY="${VHS_PY:-/opt/homebrew/bin/python3}"
+RFRATE=28.636363
+THREADS="${VHS_THREADS:-4}"                 # vhs-decode のスレッド数
+SPREAD_MAX="${VHS_SPREAD_FRAMES:-1.0}"      # 同期の窓ばらつき許容値(コマ)
+PROFILES="${VHS_PROFILES:-standard-v1 contrast-v1}"
+
+STEPS="check decode export crc align merge range deliver clips"
+
+c()  { printf '\n\033[1;36m=== %s ===\033[0m\n' "$*"; }
+ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+ng() { printf '  \033[31m✗\033[0m %s\n' "$*"; }
+wn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+hm() { date +%H:%M:%S; }
+
+NAME=""; FROM=""; YES=0; STATUS=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --status) STATUS=1 ;;
+    --yes)    YES=1 ;;
+    --from)   FROM="${2:?--from に工程名が必要}"; shift ;;
+    --help|-h) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*)       ng "知らないオプション: $1"; exit 2 ;;
+    *)        NAME="$1" ;;
+  esac
+  shift
+done
+[ -n "$NAME" ] || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+RF="$NAS/rf_$NAME.u8"
+REF="$NAS/ref_$NAME.mkv"
+WORK="$NAS/mac_$NAME"
+MASTER="$NAS/完成_$NAME.mkv"
+ST="$WORK/.state"
+LOG="$WORK/finish.log"
+
+done_of()  { [ -f "$ST/$1.done" ]; }
+mark()     { mkdir -p "$ST"; date +%FT%T > "$ST/$1.done"; }
+unmark_from() {
+  local hit=0 s
+  for s in $STEPS; do
+    [ "$s" = "$1" ] && hit=1
+    # ${ST:?} と ${s:?} で囲う。変数が空のまま rm に渡る事故を防ぐため。
+    [ "$hit" = 1 ] && rm -f -- "${ST:?}/${s:?}.done"
+  done
+  [ "$hit" = 1 ] || { ng "そんな工程は無い: $1"; echo "  使える工程: $STEPS"; exit 2; }
+}
+
+if [ "$STATUS" = 1 ]; then
+  c "進捗: $NAME"
+  for s in $STEPS; do
+    if done_of "$s"; then printf '  \033[32m済\033[0m %-8s %s\n' "$s" "$(cat "$ST/$s.done")"
+    else                  printf '  \033[33m未\033[0m %-8s\n' "$s"; fi
+  done
+  echo
+  for f in "$RF" "$REF" "$WORK/dec.tbc" "$WORK/video.mkv" "$MASTER"; do
+    [ -f "$f" ] && printf '  %8s  %s\n' "$(du -h "$f" | cut -f1)" "$(basename "$f")"
+  done
+  exit 0
+fi
+
+[ -n "$FROM" ] && unmark_from "$FROM"
+mkdir -p "$WORK" "$ST" 2>/dev/null || { ng "$WORK を作れない（NASがマウントされていない？）"; exit 1; }
+exec > >(tee -a "$LOG") 2>&1
+printf '\n\n########## %s  %s ##########\n' "$NAME" "$(date +%FT%T)"
+
+# ---------------------------------------------------------------- 1 check
+if ! done_of check; then
+  c "1/9 入力の確認  $(hm)"
+  [ -f "$RF" ]  || { ng "$RF が無い"; exit 1; }
+  [ -f "$REF" ] || wn "$REF が無い。音声なしで仕上げる"
+  for t in vhs-decode ffmpeg ffprobe mkvpropedit "$BIN/tbc-video-export"; do
+    command -v "$t" >/dev/null || { ng "$t が無い"; exit 1; }
+  done
+  TVE=$("$BIN/tbc-video-export" --version 2>&1 | head -1)
+  case "$TVE" in 0.*) ng "tbc-video-export が $TVE（0.1.8は旧名を探して必ず失敗する）"; exit 1 ;; esac
+  ok "tbc-video-export $TVE"
+  "$PY" -c 'import numpy' 2>/dev/null || { ng "$PY に numpy が無い"; exit 1; }
+  ok "python $("$PY" -c 'import numpy,platform;print(platform.python_version(),"numpy",numpy.__version__)')"
+
+  RFSZ=$(stat -f%z "$RF")
+  AVAIL=$(df -k "$NAS" | awk 'NR==2{print $4*1024}')
+  NEED=$(( RFSZ * 5 / 2 ))     # tape01実績: RF 46GB → 中間 110GB
+  printf '  RF %s / 中間に必要 約%sG / 空き %s\n' \
+    "$(du -h "$RF" | cut -f1)" "$(( NEED/1073741824 ))" "$(df -h "$NAS" | awk 'NR==2{print $4}')"
+  [ "$AVAIL" -ge "$NEED" ] && ok "容量は足りる" || { ng "容量が足りない"; exit 1; }
+  mark check
+else ok "1/9 check 済"; fi
+
+# ---------------------------------------------------------------- 2 decode
+if ! done_of decode; then
+  c "2/9 RFをデコード  $(hm)"
+  echo "  $RF → $WORK/dec.tbc  （数時間かかる）"
+  vhs-decode --tf VHS --system NTSC -f $RFRATE -t "$THREADS" --overwrite "$RF" "$WORK/dec" 2>&1 \
+    | grep -E 'Took|Completed|Error' | sed 's/^/  /'
+  [ -f "$WORK/dec.tbc" ] || { ng "デコード失敗"; exit 1; }
+  ok "TBC $(du -h "$WORK/dec.tbc" | cut -f1) ＋ chroma"
+  mark decode
+else ok "2/9 decode 済  （$(du -h "$WORK/dec.tbc" 2>/dev/null | cut -f1)）"; fi
+
+# ---------------------------------------------------------------- 3 export
+if ! done_of export; then
+  c "3/9 カラー化して書き出し  $(hm)"
+  "$BIN/tbc-video-export" --threads "$(sysctl -n hw.physicalcpu)" \
+    --chroma-decoder ntsc3d "$WORK/dec.tbc" "$WORK/video" 2>&1 \
+    | grep -iE 'export finished|error' | sed 's/^/  /'
+  [ -f "$WORK/video.mkv" ] || { ng "書き出し失敗"; exit 1; }
+  ok "映像 $(du -h "$WORK/video.mkv" | cut -f1)"
+  mark export
+else ok "3/9 export 済  （$(du -h "$WORK/video.mkv" 2>/dev/null | cut -f1)）"; fi
+
+# ---------------------------------------------------------------- 4 crc
+if ! done_of crc; then
+  if [ "${VHS_SKIP_CRC:-0}" = 1 ]; then
+    wn "4/9 crc 省略（VHS_SKIP_CRC=1）"
+  else
+    c "4/9 整合性検査  $(hm)"
+    echo "  全フレームを読み直す。ネットワーク越しなので時間がかかる"
+    N=$(ffmpeg -v error -i "$WORK/video.mkv" -f null - 2>&1 | grep -c "CRC mismatch")
+    if [ "$N" = 0 ]; then ok "CRC不一致なし"
+    else
+      ng "CRC不一致 $N 件。この書き出しは信用できない"
+      echo "  Macで出してこれが出るならディスクかNAS経路を疑う。先に進まないこと"
+      exit 1
+    fi
+  fi
+  mark crc
+else ok "4/9 crc 済"; fi
+
+# ---------------------------------------------------------------- 5 align
+if ! done_of align; then
+  if [ ! -f "$REF" ]; then
+    wn "5/9 align 省略（参照キャプチャが無い）"
+  else
+    c "5/9 同期を測る  $(hm)"
+    "$PY" "$REPO/bin/vhsalign.py" "$WORK/video.mkv" "$REF" || { ng "同期計算に失敗"; exit 1; }
+    cp /tmp/vhsalign.json "$WORK/align.json"
+
+    c "6/9 同期の合否判定"
+    read -r CONF SPREAD FPS USED < <("$PY" - "$WORK/align.json" <<'PY'
+import json,sys
+j=json.load(open(sys.argv[1]))
+print(j["confidence"], j["spread_sec"], j["fps"], j["windows_used"])
+PY
+)
+    SPF=$("$PY" -c "print(f'{$SPREAD*$FPS:.2f}')")
+    echo "  信頼度 $CONF / ばらつき ${SPF}コマ / 採用した窓 ${USED}個"
+    echo "  合格条件: ばらつき ${SPREAD_MAX}コマ以内 かつ 窓4個以上"
+    if "$PY" -c "import sys;sys.exit(0 if $SPF <= $SPREAD_MAX and $USED >= 4 else 1)"; then
+      ok "合格。無人で先に進む"
+    elif [ "$YES" = 1 ]; then
+      wn "不合格だが --yes なので進む。できた動画の音ズレを必ず確認すること"
+    else
+      ng "不合格。ここで止める"
+      echo
+      echo "  ここから先は人が判断すること。選択肢は3つ:"
+      echo "    1) 窓の条件を変えて測り直す（vhsalign.py の NWIN / WIN を増やす）"
+      echo "    2) 測定値を信じて進める:"
+      echo "         vhsfinish $NAME --yes"
+      echo "    3) 音声を諦めて映像だけ仕上げる:"
+      echo "         mv \"$REF\" \"$REF.bak\" && vhsfinish $NAME --from align"
+      exit 1
+    fi
+  fi
+  mark align
+else ok "5-6/9 align 済"; fi
+
+# ---------------------------------------------------------------- 7 merge
+if ! done_of merge; then
+  c "7/9 音声を合体して保存マスターを作る  $(hm)"
+  # マスターは絶対に上書きしない。やり直すなら人が手で退避させる。
+  if [ -f "$MASTER" ]; then
+    ng "$MASTER が既にある。マスターは上書きしない"
+    echo "  作り直すなら先に退避させること:"
+    echo "    mv \"$MASTER\" \"$NAS/旧_完成_$NAME.mkv\""
+    exit 1
+  fi
+
+  if [ ! -f "$REF" ]; then
+    cp "$WORK/video.mkv" "$MASTER"
+    ok "音声なしで複製 → $(basename "$MASTER")"
+  else
+    read -r TRIM DRIFT < <("$PY" - "$WORK/align.json" <<'PY'
+import json,sys
+j=json.load(open(sys.argv[1]))
+print(j["trim_sec"], j["drift"])
+PY
+)
+    # 参照が先に始まっていれば先頭を切り落とす(-ss)。逆なら遅らせる(-itsoffset)。
+    if "$PY" -c "import sys;sys.exit(0 if $TRIM >= 0 else 1)"; then
+      AIN=(-ss "$TRIM")
+      echo "  参照の先頭 ${TRIM} 秒を切り落として頭を揃える"
+    else
+      NEG=$("$PY" -c "print(-($TRIM))")
+      AIN=(-itsoffset "$NEG")
+      echo "  参照を ${NEG} 秒ぶん遅らせて頭を揃える"
+    fi
+
+    # 速度補正。asetrate は小数を受け取っても整数に切り捨てる
+    # （実測: 47985 と 47984.99 が同一出力）。48kHzのまま刻むと
+    # 刻み幅が 20.8ppm = 0.075秒/時 になり、2時間テープで4.5コマずれる。
+    # いったん10倍に上げてから刻めば 2.08ppm まで下がる。
+    #
+    # Macのffmpegは libsoxr を含まないため resampler=soxr は使えない
+    # （Requested resampling engine is unavailable で落ちる）。
+    # 標準のswrを filter_size=128 で使う。
+    if "$PY" -c "import sys;sys.exit(0 if abs($DRIFT-1) > 5e-6 else 1)"; then
+      R10=$("$PY" -c "print(round(480000*$DRIFT))")
+      RESID=$("$PY" -c "print(f'{abs(480000*$DRIFT-$R10)/480000*1e6:.2f}')")
+      AF="aresample=480000,asetrate=$R10,aresample=48000:filter_size=128"
+      echo "  速度補正 ${DRIFT} → 480000Hzで刻む（残差 ${RESID}ppm）"
+    else
+      AF="aresample=48000"
+      echo "  速度補正なし（速度比 ${DRIFT} はほぼ1）"
+    fi
+
+    ffmpeg -nostdin -v error -y \
+      -i "$WORK/video.mkv" "${AIN[@]}" -i "$REF" \
+      -map 0:v -map 1:a \
+      -af "$AF" \
+      -c:v copy -c:a flac -compression_level 8 \
+      -shortest "$MASTER" || { ng "合体に失敗"; rm -f -- "${MASTER:?}"; exit 1; }
+
+    # 自己検証。符号を取り違えるとここが大きくずれる。
+    AST=$(ffprobe -v error -select_streams a:0 -show_entries stream=start_time \
+          -of default=nw=1:nk=1 "$MASTER" 2>/dev/null)
+    if "$PY" -c "import sys;sys.exit(0 if abs(float('${AST:-0}')) <= 0.2 else 1)" 2>/dev/null; then
+      ok "音声の開始時刻 ${AST}s（映像と揃っている）"
+    else
+      ng "音声の開始時刻が ${AST}s もずれている。同期の符号を疑うこと"
+      exit 1
+    fi
+    ok "保存マスター $(du -h "$MASTER" | cut -f1) → $(basename "$MASTER")"
+  fi
+  mark merge
+else ok "7/9 merge 済  （$(du -h "$MASTER" 2>/dev/null | cut -f1)）"; fi
+
+# ---------------------------------------------------------------- 8 range
+if ! done_of range; then
+  c "8/9 レンジ表記を直す  $(hm)"
+  # tbc-video-export の出力は黒=0/白=1023 のフルレンジだが、タグは tv のまま
+  # 出る。放置するとプレーヤーが 940 以上（画面の約20%）を真っ白に潰す。
+  # 直すのは容器のヘッダだけで、映像データには触らない（無劣化・0.2秒）。
+  RNG=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_range -of csv=p=0 "$MASTER")
+  if [ "$RNG" = pc ]; then
+    ok "color_range は既に pc"
+  else
+    echo "  color_range が ${RNG:-未設定} → pc に書き換える（メタデータのみ）"
+    mkvpropedit "$MASTER" --edit track:v1 --set colour-range=2 >/dev/null || { ng "書き換え失敗"; exit 1; }
+    RNG=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_range -of csv=p=0 "$MASTER")
+    [ "$RNG" = pc ] && ok "pc になった" || { ng "まだ ${RNG}"; exit 1; }
+  fi
+  mark range
+else ok "8/9 range 済"; fi
+
+# ---------------------------------------------------------------- 9 deliver
+if ! done_of deliver; then
+  c "9/9 納品物を作る  $(hm)"
+  for p in $PROFILES; do
+    [ -f "$REPO/profiles/$p.sh" ] || { ng "プロファイルが無い: $p"; exit 1; }
+    VHS_NAS_DIR="$NAS" "$HERE/vhsdeliver" "$NAME" "$p" || { ng "$p の書き出しに失敗"; exit 1; }
+  done
+  mark deliver
+else ok "9/9 deliver 済"; fi
+
+# ---------------------------------------------------------------- clips
+if ! done_of clips; then
+  c "確認用クリップ  $(hm)"
+  OUT="$NAS/_確認用"; mkdir -p "$OUT"
+  DUR=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$MASTER" | cut -d. -f1)
+  i=1
+  for T in $((DUR/14)) $((DUR/2)) $((DUR*93/100)); do
+    ffmpeg -nostdin -v error -y -ss "$T" -i "$MASTER" -t 20 \
+      -vf "bwdif=mode=send_field:parity=tff,crop=704:480:28:4,scale=640:480:flags=lanczos:in_range=pc:out_range=tv,setsar=1" \
+      -c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k \
+      "$OUT/${NAME}_確認_${i}.mp4" 2>/dev/null
+    printf '  %d本目 %02d:%02d から20秒  %s\n' "$i" $((T/60)) $((T%60)) \
+      "$(du -h "$OUT/${NAME}_確認_${i}.mp4" 2>/dev/null | cut -f1)"
+    i=$((i+1))
+  done
+  ok "$OUT に配置"
+  mark clips
+else ok "clips 済"; fi
+
+c "完了  $(hm)"
+printf '  %8s  %s\n' "$(du -h "$MASTER" | cut -f1)" "$(basename "$MASTER")"
+for p in $PROFILES; do
+  L=$(. "$REPO/profiles/$p.sh"; echo "$PROFILE_LABEL")
+  F="$NAS/納品_${L}_$NAME.mp4"
+  [ -f "$F" ] && printf '  %8s  %s\n' "$(du -h "$F" | cut -f1)" "$(basename "$F")"
+done
+echo
+echo "  人がやること:"
+echo "    1) _確認用 の3本を再生用PCで見る。特に3本目で音ズレが増えていないか"
+echo "    2) 納品物を1本は通して目で見る。自動検査は壊れていないかしか見ていない"
+echo "    3) 中間を片づける（$(du -sh "$WORK" 2>/dev/null | cut -f1)）:"
+echo "         vhsclean $NAME"
+echo "  ログ: $LOG"

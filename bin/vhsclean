@@ -1,0 +1,65 @@
+#!/bin/bash
+# vhsclean - 仕上げが済んだテープの中間ファイルを片づける
+#
+#   vhsclean tape02        中間(TBC・無音映像)を削除。原本RFと成果物は残す
+#   vhsclean tape02 --rf   原本RFも削除（成果物を全部照合してから）
+#
+# 削除はファイル名を一つずつ並べて行う。ディレクトリごと rm -rf しないのは、
+# 変数が空のまま渡る事故で原本まで消す経路を作らないため。
+set -uo pipefail
+NAS="${VHS_NAS_DIR:-/Volumes/home/VHS_RF}"
+NAME="${1:-}"
+RFTOO=0
+[ "${2:-}" = "--rf" ] && RFTOO=1
+[ -n "$NAME" ] || { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+WORK="$NAS/mac_$NAME"
+MASTER="$NAS/完成_$NAME.mkv"
+RF="$NAS/rf_$NAME.u8"
+
+ok(){ printf '  \033[32m✓\033[0m %s\n' "$*"; }
+ng(){ printf '  \033[31m✗\033[0m %s\n' "$*"; }
+wn(){ printf '  \033[33m!\033[0m %s\n' "$*"; }
+
+printf '\n\033[1;36m=== 片づけ: %s ===\033[0m\n' "$NAME"
+[ -d "$WORK" ] || { ng "$WORK が無い"; exit 1; }
+
+# 成果物が揃っていることを確かめてからでないと消さない。
+[ -f "$MASTER" ] || { ng "保存マスター $MASTER が無い。消すのは仕上げが済んでから"; exit 1; }
+MS=$(stat -f%z "$MASTER")
+[ "$MS" -gt 1000000000 ] || { ng "マスターが ${MS} バイトしかない。壊れている疑い"; exit 1; }
+ok "保存マスター $(du -h "$MASTER" | cut -f1)"
+
+N=0
+for f in "$NAS"/納品_*_"$NAME".mp4; do
+  [ -f "$f" ] || continue
+  ok "納品物 $(du -h "$f" | cut -f1)  $(basename "$f")"
+  N=$((N+1))
+done
+[ "$N" -ge 1 ] || { ng "納品MP4が1本も無い"; exit 1; }
+
+BEFORE=$(du -sm "$WORK" | cut -f1)
+for f in dec.tbc dec_chroma.tbc dec.tbc.json dec_chroma.tbc.json dec.log video.mkv; do
+  [ -e "${WORK:?}/$f" ] || continue
+  printf '  削除 %-22s %s\n' "$f" "$(du -h "${WORK:?}/$f" | cut -f1)"
+  rm -f -- "${WORK:?}/$f"
+done
+AFTER=$(du -sm "$WORK" | cut -f1)
+ok "$((BEFORE-AFTER)) MB 解放（$BEFORE MB → $AFTER MB）"
+echo "  残したもの: .state / finish.log / align.json"
+
+if [ "$RFTOO" = 1 ]; then
+  printf '\n\033[1;36m=== 原本RFの削除 ===\033[0m\n'
+  [ -f "$RF" ] || { wn "$RF は既に無い"; exit 0; }
+  # 原本を消すのは最後の砦を外す操作。マスターが読み通せることまで確かめる。
+  echo "  マスターを全フレーム読んで検査する（時間がかかる）"
+  CRC=$(ffmpeg -v error -i "$MASTER" -f null - 2>&1 | grep -c "CRC mismatch")
+  [ "$CRC" = 0 ] || { ng "マスターにCRC不一致 $CRC 件。原本は消さない"; exit 1; }
+  ok "マスターはCRC不一致なし"
+  printf '  原本 %s を削除する。元に戻せない。よければ %s と打て: ' \
+    "$(du -h "$RF" | cut -f1)" "$NAME"
+  read -r ans
+  [ "$ans" = "$NAME" ] || { wn "一致しなかったので何もしない"; exit 0; }
+  rm -f -- "${RF:?}"
+  ok "原本を削除した"
+fi
