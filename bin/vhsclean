@@ -8,14 +8,22 @@
 # 変数が空のまま渡る事故で原本まで消す経路を作らないため。
 set -uo pipefail
 NAS="${VHS_NAS_DIR:-/Volumes/home/VHS_RF}"
+MKVDIR="${VHS_MKV_DIR:-/Volumes/rf_mkv}"
+MP4DIR="${VHS_MP4_DIR:-/Volumes/rf_mp4}"
 NAME="${1:-}"
 RFTOO=0
 [ "${2:-}" = "--rf" ] && RFTOO=1
 [ -n "$NAME" ] || { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 WORK="$NAS/mac_$NAME"
-MASTER="$NAS/完成_$NAME.mkv"
 RF="$NAS/rf_$NAME.u8"
+
+# マスターは作品名に改名される運用。vhsfinish が控えた実際のパスを優先する。
+MASTER="$MKVDIR/完成_$NAME.mkv"
+if [ -f "$WORK/.state/master.path" ]; then
+  R=$(cat "$WORK/.state/master.path")
+  [ -f "$R" ] && MASTER="$R"
+fi
 
 ok(){ printf '  \033[32m✓\033[0m %s\n' "$*"; }
 ng(){ printf '  \033[31m✗\033[0m %s\n' "$*"; }
@@ -25,13 +33,20 @@ printf '\n\033[1;36m=== 片づけ: %s ===\033[0m\n' "$NAME"
 [ -d "$WORK" ] || { ng "$WORK が無い"; exit 1; }
 
 # 成果物が揃っていることを確かめてからでないと消さない。
-[ -f "$MASTER" ] || { ng "保存マスター $MASTER が無い。消すのは仕上げが済んでから"; exit 1; }
+[ -f "$MASTER" ] || {
+  ng "保存マスター $MASTER が無い。消すのは仕上げが済んでから"
+  echo "  改名したなら場所を控え直すこと:"
+  echo "    echo \"<実際のパス>\" > \"$WORK/.state/master.path\""
+  exit 1
+}
 MS=$(stat -f%z "$MASTER")
 [ "$MS" -gt 1000000000 ] || { ng "マスターが ${MS} バイトしかない。壊れている疑い"; exit 1; }
 ok "保存マスター $(du -h "$MASTER" | cut -f1)"
 
+# 納品物はマスターの名前から作られる。完成_ の接頭辞は落としてある。
+BASE=$(basename "$MASTER" .mkv); BASE=${BASE#完成_}
 N=0
-for f in "$NAS"/納品_*_"$NAME".mp4; do
+for f in "$MP4DIR/$BASE"_*.mp4; do
   [ -f "$f" ] || continue
   ok "納品物 $(du -h "$f" | cut -f1)  $(basename "$f")"
   N=$((N+1))

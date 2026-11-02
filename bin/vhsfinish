@@ -35,7 +35,14 @@ BIN=$HOME/src/tbc-tools/build/bin
 # これは旧名 ld-dropout-correct を探すため必ず失敗する。
 PATH="$BIN:$HOME/.local/bin:$PATH"
 
+# 置き場は3つに分かれている。NASの共有ごとにマウントされていて、
+# home の下のフォルダではない。
+#   NAS    原本RF・参照キャプチャ・中間ファイル・確認用クリップ（作業用）
+#   MKVDIR 保存マスター(.mkv)
+#   MP4DIR 納品MP4
 NAS="${VHS_NAS_DIR:-/Volumes/home/VHS_RF}"
+MKVDIR="${VHS_MKV_DIR:-/Volumes/rf_mkv}"
+MP4DIR="${VHS_MP4_DIR:-/Volumes/rf_mp4}"
 PY="${VHS_PY:-/opt/homebrew/bin/python3}"
 RFRATE=28.636363
 THREADS="${VHS_THREADS:-4}"                 # vhs-decode のスレッド数
@@ -67,9 +74,17 @@ done
 RF="$NAS/rf_$NAME.u8"
 REF="$NAS/ref_$NAME.mkv"
 WORK="$NAS/mac_$NAME"
-MASTER="$NAS/完成_$NAME.mkv"
 ST="$WORK/.state"
 LOG="$WORK/finish.log"
+
+# 保存マスターの場所。作るときは 完成_<名前>.mkv だが、あとから作品名に
+# 改名される運用なので、作った時点の実際のパスを .state に控えておき、
+# 以降の工程はそれを見る。改名されて見失ったときは人に知らせて止める。
+MASTER="$MKVDIR/完成_$NAME.mkv"
+if [ -f "$ST/master.path" ]; then
+  RECORDED=$(cat "$ST/master.path")
+  [ -f "$RECORDED" ] && MASTER="$RECORDED"
+fi
 
 done_of()  { [ -f "$ST/$1.done" ]; }
 mark()     { mkdir -p "$ST"; date +%FT%T > "$ST/$1.done"; }
@@ -91,8 +106,10 @@ if [ "$STATUS" = 1 ]; then
   done
   echo
   for f in "$RF" "$REF" "$WORK/dec.tbc" "$WORK/video.mkv" "$MASTER"; do
-    [ -f "$f" ] && printf '  %8s  %s\n' "$(du -h "$f" | cut -f1)" "$(basename "$f")"
+    [ -f "$f" ] && printf '  %8s  %s\n' "$(du -h "$f" | cut -f1)" "$f"
   done
+  echo
+  printf '  作業用 %s\n  マスター %s\n  納品物 %s\n' "$NAS" "$MKVDIR" "$MP4DIR"
   exit 0
 fi
 
@@ -209,12 +226,14 @@ if ! done_of merge; then
   if [ -f "$MASTER" ]; then
     ng "$MASTER が既にある。マスターは上書きしない"
     echo "  作り直すなら先に退避させること:"
-    echo "    mv \"$MASTER\" \"$NAS/旧_完成_$NAME.mkv\""
+    echo "    mv \"$MASTER\" \"$MKVDIR/旧_完成_$NAME.mkv\""
     exit 1
   fi
 
+  mkdir -p "$MKVDIR" 2>/dev/null || { ng "$MKVDIR が見えない（共有がマウントされていない）"; exit 1; }
   if [ ! -f "$REF" ]; then
     cp "$WORK/video.mkv" "$MASTER"
+    echo "$MASTER" > "$ST/master.path"
     ok "音声なしで複製 → $(basename "$MASTER")"
   else
     read -r TRIM DRIFT < <("$PY" - "$WORK/align.json" <<'PY'
@@ -267,10 +286,22 @@ PY
       ng "音声の開始時刻が ${AST}s もずれている。同期の符号を疑うこと"
       exit 1
     fi
-    ok "保存マスター $(du -h "$MASTER" | cut -f1) → $(basename "$MASTER")"
+    echo "$MASTER" > "$ST/master.path"
+    ok "保存マスター $(du -h "$MASTER" | cut -f1) → $MASTER"
   fi
   mark merge
 else ok "7/9 merge 済  （$(du -h "$MASTER" 2>/dev/null | cut -f1)）"; fi
+
+# マスターを見失っていないか。改名されると以降の工程が空振りするので、
+# ここで止めて人に場所を教えてもらう。
+if done_of merge && [ ! -f "$MASTER" ]; then
+  ng "保存マスターが見つからない: $MASTER"
+  echo "  改名したなら、そのファイルを直接渡して納品物を作れる:"
+  echo "    vhsdeliver \"$MKVDIR/<改名したファイル>.mkv\" standard-v1"
+  echo "  または場所を控え直す:"
+  echo "    echo \"<実際のパス>\" > \"$ST/master.path\""
+  exit 1
+fi
 
 # ---------------------------------------------------------------- 8 range
 if ! done_of range; then
@@ -295,7 +326,8 @@ if ! done_of deliver; then
   c "9/9 納品物を作る  $(hm)"
   for p in $PROFILES; do
     [ -f "$REPO/profiles/$p.sh" ] || { ng "プロファイルが無い: $p"; exit 1; }
-    VHS_NAS_DIR="$NAS" "$HERE/vhsdeliver" "$NAME" "$p" || { ng "$p の書き出しに失敗"; exit 1; }
+    VHS_MKV_DIR="$MKVDIR" VHS_MP4_DIR="$MP4DIR" \
+      "$HERE/vhsdeliver" "$MASTER" "$p" || { ng "$p の書き出しに失敗"; exit 1; }
   done
   mark deliver
 else ok "9/9 deliver 済"; fi
@@ -321,9 +353,10 @@ else ok "clips 済"; fi
 
 c "完了  $(hm)"
 printf '  %8s  %s\n' "$(du -h "$MASTER" | cut -f1)" "$(basename "$MASTER")"
+BASE=$(basename "$MASTER" .mkv); BASE=${BASE#完成_}
 for p in $PROFILES; do
   L=$(. "$REPO/profiles/$p.sh"; echo "$PROFILE_LABEL")
-  F="$NAS/納品_${L}_$NAME.mp4"
+  F="$MP4DIR/${BASE}_${L}.mp4"
   [ -f "$F" ] && printf '  %8s  %s\n' "$(du -h "$F" | cut -f1)" "$(basename "$F")"
 done
 echo

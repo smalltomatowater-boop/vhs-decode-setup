@@ -56,7 +56,7 @@ VHSデジタル化のために古いPCを用意すると踏みやすい組み合
 | デッキ | ビクター HR-VX100 |
 | 収録先 | 内蔵SATA SSD 238GB を ext4 で専用化（実測 397MB/s） |
 | 仕上げ機 | Apple M4 10コア / 32GB / macOS 26.5.1（書き出し以降を担当） |
-| 保管 | NAS 3.6TB（SMB・1000baseT）。中間ファイルもここに置く |
+| 保管 | NAS 3.6TB（SMB・1000baseT）。共有を3つに分ける |
 
 ### 信号の流れ
 
@@ -337,6 +337,22 @@ vhsclean 名前             中間を片づける
 vhsclean 名前 --rf        原本RFも削除（成果物を照合し、名前を打たせる）
 
 setup-mac.sh verify       必要なツールが揃っているか確認
+```
+
+置き場はNASの共有ごとに分かれている（`home` の下のフォルダではない）。
+
+```sh
+VHS_NAS_DIR=/Volumes/home/VHS_RF   # 原本RF・参照キャプチャ・中間・確認用
+VHS_MKV_DIR=/Volumes/rf_mkv        # 保存マスター(.mkv)
+VHS_MP4_DIR=/Volumes/rf_mp4        # 納品MP4
+```
+
+マスターは作品名に改名して運用する。改名したら、ファイルそのものを渡せば
+納品物を作り直せる。出力名はマスターの名前から作られる。
+
+```sh
+vhsdeliver "/Volumes/rf_mkv/[GLAY]VIDEO GLAY 2.mkv" standard-v1
+# → /Volumes/rf_mp4/[GLAY]VIDEO GLAY 2_標準.mp4
 ```
 
 いちばん楽なのは `watch`。これを起動して放置し、**デッキの再生ボタンを押すだけ**。

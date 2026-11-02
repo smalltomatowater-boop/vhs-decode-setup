@@ -1,8 +1,12 @@
 #!/bin/bash
-# vhsdeliver <名前> [プロファイル]
+# vhsdeliver <名前またはmkvのパス> [プロファイル]
 #
-#   vhsdeliver tape01              標準版（standard-v1）
-#   vhsdeliver tape01 contrast-v1  コントラスト重視版
+#   vhsdeliver tape01                                  標準版（standard-v1）
+#   vhsdeliver tape01 contrast-v1                      コントラスト重視版
+#   vhsdeliver "/Volumes/rf_mkv/作品名.mkv"              改名済みマスターを直接渡す
+#
+# マスターは作品名に改名して運用するので、名前で引けないときは
+# ファイルそのものを渡せるようにしてある。出力名はマスターの名前から作る。
 #
 # 保存マスター 完成_<名前>.mkv から納品用 MP4 を作る。
 # マスターには一切触れない。
@@ -14,19 +18,35 @@
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(dirname "$HERE")
-NAME=${1:-}
+ARG=${1:-}
 PROF=${2:-standard-v1}
-NAS="${VHS_NAS_DIR:-/Volumes/home/VHS_RF}"
+# 置き場はNASの共有ごとに分かれている（home の下のフォルダではない）
+MKVDIR="${VHS_MKV_DIR:-/Volumes/rf_mkv}"
+MP4DIR="${VHS_MP4_DIR:-/Volumes/rf_mp4}"
 
-[ -n "$NAME" ] || { echo "使い方: vhsdeliver <名前> [プロファイル]"; exit 2; }
+[ -n "$ARG" ] || { echo "使い方: vhsdeliver <名前またはmkvのパス> [プロファイル]"; exit 2; }
 P="$REPO/profiles/$PROF.sh"
 [ -f "$P" ] || { echo "プロファイルが無い: $P"; exit 2; }
 # shellcheck source=/dev/null
 . "$P"
 
-SRC="$NAS/完成_$NAME.mkv"
-OUT="$NAS/納品_${PROFILE_LABEL}_$NAME.mp4"
-[ -f "$SRC" ] || { echo "保存マスターが無い: $SRC"; exit 1; }
+# 引数がファイルならそれをマスターとして使い、そうでなければ名前として扱う。
+if [ -f "$ARG" ]; then
+  SRC="$ARG"
+else
+  SRC="$MKVDIR/完成_$ARG.mkv"
+fi
+[ -f "$SRC" ] || {
+  echo "保存マスターが無い: $SRC"
+  echo "  改名してあるなら、そのファイルを直接渡すこと:"
+  echo "    vhsdeliver \"$MKVDIR/<ファイル名>.mkv\" $PROF"
+  exit 1
+}
+
+# 出力名はマスターの名前から作る。完成_ の接頭辞は落とす。
+BASE=$(basename "$SRC" .mkv); BASE=${BASE#完成_}
+mkdir -p "$MP4DIR" 2>/dev/null || { echo "$MP4DIR が見えない（共有がマウントされていない）"; exit 1; }
+OUT="$MP4DIR/${BASE}_${PROFILE_LABEL}.mp4"
 
 # マスターのレンジ表記を確認する。tbc-video-export の出力はフルレンジだが
 # タグが tv のまま出ることがあり、そのままだと変換が二重にかかる。

@@ -13,9 +13,14 @@
   vhstool push tape02        NASへ転送
   ※ この機では書き出しをさせない
 
-■ NAS 192.168.128.120 /VHS_RF
-  rf_tape02.u8     原本RF
-  ref_tape02.mkv   参照キャプチャ（音声源・同期の基準）
+■ NAS 192.168.128.120 ── 共有が3つ。home の下のフォルダではない
+  /Volumes/home/VHS_RF   作業用
+      rf_tape02.u8       原本RF
+      ref_tape02.mkv     参照キャプチャ（音声源・同期の基準）
+      mac_tape02/        中間ファイル（TBC・video.mkv・.state）
+      _確認用/            20秒クリップ
+  /Volumes/rf_mkv        保存マスター(.mkv)
+  /Volumes/rf_mp4        納品MP4
 
 ■ Mac ── 書き出し以降
   vhsfinish tape02           これ1本で納品物まで
@@ -44,13 +49,34 @@
 
 ## 成果物
 
-| | |
-|---|---|
-| `rf_<名前>.u8` | 原本RF。これがある限り何度でもやり直せる |
-| `完成_<名前>.mkv` | 保存マスター。FFV1 + FLAC・無加工・フルレンジ |
-| `納品_標準_<名前>.mp4` | H.264 640x480 CRF18 + AAC 192k |
-| `納品_コントラスト重視_<名前>.mp4` | 同上・黒点84 |
-| `_確認用/` | 20秒×3本。音ズレ確認用 |
+| 置き場 | ファイル | |
+|---|---|---|
+| `home/VHS_RF` | `rf_<名前>.u8` | 原本RF。これがある限り何度でもやり直せる |
+| `home/VHS_RF` | `_確認用/` | 20秒×3本。音ズレ確認用 |
+| `rf_mkv` | `完成_<名前>.mkv` | 保存マスター。FFV1 + FLAC・無加工・フルレンジ |
+| `rf_mp4` | `<名前>_標準.mp4` | H.264 640x480 CRF18 + AAC 192k |
+| `rf_mp4` | `<名前>_コントラスト重視.mp4` | 同上・黒点84 |
+
+置き場は環境変数で変えられる。
+
+```sh
+VHS_NAS_DIR=/Volumes/home/VHS_RF   # 作業用
+VHS_MKV_DIR=/Volumes/rf_mkv        # 保存マスター
+VHS_MP4_DIR=/Volumes/rf_mp4        # 納品MP4
+```
+
+## 改名した後にやり直すとき
+
+マスターは作品名に改名して運用する。`vhsfinish` は作った時点のパスを
+`mac_<名前>/.state/master.path` に控えるので、改名しなければそのまま追える。
+改名したら、ファイルそのものを渡せばいい。
+
+```sh
+vhsdeliver "/Volumes/rf_mkv/[GLAY]VIDEO GLAY 2.mkv" standard-v1
+```
+
+出力名はマスターの名前から作られる（`完成_` の接頭辞は落とす）。
+上の例なら `[GLAY]VIDEO GLAY 2_標準.mp4` になる。
 
 ## 工程マーカー
 
