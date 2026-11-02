@@ -414,15 +414,23 @@ cmd_pushrf() {
   local name=$1 d="$WORK/$1"
   [ "$NAS" = "off" ] && { wn "VHS_NAS_DIR=off なので転送しない"; return 0; }
   [ -d "$NAS" ] || { ng "$NAS が見えない（NASがマウントされていない）"; return 1; }
-  local pair src dst a b
+  # 転送中のファイルを完成品と見分けられるよう、一時名で送ってから改名する。
+  # rsync --inplace は最終的な名前のまま書き進めるので、そのままだと
+  # Mac 側の vhsfinish が「もう在る」と判断して途中のRFをデコードし始める。
+  # 同じ共有の中なので改名は一瞬かつ不可分。
+  local pair src tmp dst a b
   for pair in "rf.u8 rf_${name}.u8" "ref.mkv ref_${name}.mkv"; do
-    set -- $pair; src="$d/$1"; dst="$NAS/$2"
+    set -- $pair; src="$d/$1"; dst="$NAS/$2"; tmp="$NAS/.$2.part"
     [ -f "$src" ] || { wn "$src が無いので飛ばす"; continue; }
     echo "  $1 → $2  ($(du -h "$src" | cut -f1))"
-    rsync -h --inplace "$src" "$dst" || { ng "転送失敗 $1"; return 1; }
-    a=$(stat -c%s "$src"); b=$(stat -c%s "$dst" 2>/dev/null || echo 0)
-    if [ "$a" = "$b" ]; then ok "$a バイト一致"
-    else ng "サイズが合わない（元 $a / 先 $b）"; return 1; fi
+    rsync -h --inplace "$src" "$tmp" || { ng "転送失敗 $1"; return 1; }
+    a=$(stat -c%s "$src"); b=$(stat -c%s "$tmp" 2>/dev/null || echo 0)
+    if [ "$a" != "$b" ]; then
+      ng "サイズが合わない（元 $a / 先 $b）。一時ファイルを残すので調べること: $tmp"
+      return 1
+    fi
+    mv -f "$tmp" "$dst" || { ng "改名に失敗 $tmp → $dst"; return 1; }
+    ok "$a バイト一致  →  $2"
   done
 }
 

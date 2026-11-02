@@ -123,6 +123,24 @@ if ! done_of check; then
   c "1/9 入力の確認  $(hm)"
   [ -f "$RF" ]  || { ng "$RF が無い"; exit 1; }
   [ -f "$REF" ] || wn "$REF が無い。音声なしで仕上げる"
+
+  # まだ転送中のものを掴まない。
+  # rsync --inplace は最終的な名前のまま書き進めるので、存在するだけでは
+  # 完成の証拠にならない。vhstool 側は一時名で送って最後に改名するが、
+  # Finder や手打ちの rsync で送られることもあるため、ここでも見張る。
+  for part in "$NAS/.$(basename "$RF").part" "$NAS/.$(basename "$REF").part"; do
+    [ -e "$part" ] && { ng "転送中のファイルがある: $part"; echo "  終わるまで待つこと"; exit 1; }
+  done
+  for f in "$RF" "$REF"; do
+    [ -f "$f" ] || continue
+    s1=$(stat -f%z "$f"); sleep 4; s2=$(stat -f%z "$f")
+    if [ "$s1" != "$s2" ]; then
+      ng "$(basename "$f") のサイズが増え続けている（$s1 → $s2）"
+      echo "  まだ転送中。終わってから出直すこと"
+      exit 1
+    fi
+  done
+  ok "入力は静止している（転送中ではない）"
   for t in vhs-decode ffmpeg ffprobe mkvpropedit "$BIN/tbc-video-export"; do
     command -v "$t" >/dev/null || { ng "$t が無い"; exit 1; }
   done
