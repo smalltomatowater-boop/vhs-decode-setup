@@ -5,7 +5,9 @@ set -uo pipefail
 WORK=/mnt/rf
 BIN=$HOME/src/tbc-tools/build/bin
 VENV=$HOME/.local/share/pipx/venvs/vhs-decode/bin/python
-PATH="$HOME/.local/bin:$BIN:$PATH"
+# $BIN を先に置く。~/.local/bin には古い tbc-video-export 0.1.8 が残っていて、
+# これは旧名 ld-dropout-correct を探すため必ず失敗する。
+PATH="$BIN:$HOME/.local/bin:$PATH"
 CXDEV=/dev/cxadc0
 RFRATE=28.636363
 PARAMS=/sys/class/cxadc/cxadc0/device/parameters
@@ -142,6 +144,74 @@ cmd_rec() {
 
   ok "RF   $(du -h "$rf" | cut -f1)"
   [ -f "$ref" ] && ok "参照 $(du -h "$ref" | cut -f1)"
+}
+
+cmd_pbuild() {
+  # 区間を分けて並列にデコードする。
+  # vhs-decode 1本では8コア中2.7コアしか使えず6割が遊ぶため、
+  # 複数本を別区間に走らせたほうが総スループットが上がる。
+  local name=$1 workers=${2:-3} d="$WORK/$1" rf="$WORK/$1/rf.u8"
+  local overlap=${VHS_OVERLAP:-60}      # 境目で捨てる重なりフレーム数
+  [ -f "$rf" ] || { ng "$rf が無い"; return 1; }
+
+  local total
+  total=$($VENV -c "
+import os
+# RFのバイト数から総フレーム数を見積もる（28.636363MSPS / 29.97fps）
+print(int(os.path.getsize('$rf') / 28_636_363 * 30000/1001))")
+  local chunk=$(( (total + workers - 1) / workers ))
+
+  c "=== 並列デコード: $name ==="
+  echo "  総フレーム数(推定) $total / $workers 分割 / 1区間 $chunk フレーム"
+  echo "  重なり $overlap フレーム（境目で捨てる）"
+
+  local pids=() i
+  for ((i=0; i<workers; i++)); do
+    local s=$(( i*chunk )) l=$chunk
+    if [ $i -gt 0 ]; then s=$(( s - overlap )); l=$(( l + overlap )); fi
+    echo "  [$i] フレーム $s から $l 本"
+    ( vhs-decode --tf VHS --system NTSC -f $RFRATE -t 3 \
+        -s "$s" -l "$l" --overwrite "$rf" "$d/seg$i" > "$d/seg$i.declog" 2>&1 ) &
+    pids+=($!)
+  done
+  echo "  $workers 本を並列実行中..."
+  local fail=0
+  for pid in "${pids[@]}"; do wait "$pid" || fail=1; done
+  [ $fail = 1 ] && { ng "デコードに失敗した区間がある"; return 1; }
+  ok "全区間のデコード完了"
+
+  c "=== 区間ごとに書き出し ==="
+  for ((i=0; i<workers; i++)); do
+    [ -f "$d/seg$i.tbc" ] || { ng "seg$i.tbc が無い"; return 1; }
+    "$BIN/tbc-video-export" --threads "$(nproc)" --chroma-decoder ntsc3d \
+      "$d/seg$i.tbc" "$d/segv$i" > /dev/null 2>&1
+    [ -f "$d/segv$i.mkv" ] || { ng "seg$i の書き出しに失敗"; return 1; }
+    echo "  [$i] $(du -h "$d/segv$i.mkv" | cut -f1)"
+  done
+
+  c "=== 連結 ==="
+  # FFV1は全フレームがキーフレームなので、-ss + -c copy で正確かつ可逆に切れる
+  local skip; skip=$($VENV -c "print($overlap/(30000/1001))")
+  : > "$d/concat.txt"
+  for ((i=0; i<workers; i++)); do
+    if [ $i -eq 0 ]; then
+      echo "file '$d/segv$i.mkv'" >> "$d/concat.txt"
+    else
+      ffmpeg -nostdin -v error -y -ss "$skip" -i "$d/segv$i.mkv" -c copy "$d/segt$i.mkv"
+      echo "file '$d/segt$i.mkv'" >> "$d/concat.txt"
+    fi
+  done
+  ffmpeg -nostdin -v error -y -f concat -safe 0 -i "$d/concat.txt" -c copy "$d/video.mkv"
+  [ -f "$d/video.mkv" ] || { ng "連結に失敗"; return 1; }
+  ok "映像 $(du -h "$d/video.mkv" | cut -f1)"
+
+  c "=== 整合性検査 ==="
+  local crc; crc=$(ffmpeg -v error -i "$d/video.mkv" -f null - 2>&1 | grep -c "CRC mismatch")
+  [ "$crc" = "0" ] && ok "CRC不一致なし" || wn "CRC不一致 $crc 件"
+
+  rm -f "$d"/seg*.tbc "$d"/seg*_chroma.tbc "$d"/seg*.tbc.json "$d"/seg*.declog \
+        "$d"/segv*.mkv "$d"/segt*.mkv "$d"/concat.txt
+  echo "  区間ファイルを削除した"
 }
 
 cmd_build() {
@@ -398,6 +468,7 @@ vhstool - VHSのRF+通常キャプチャ自動化
   vhstool check            環境チェック（デバイス・空き容量・信号レベル）
   vhstool rec 名前 [秒]     RFと参照キャプチャを同時収録（秒を省略するとCtrl-Cまで）
   vhstool build 名前        デコード→カラー化→音声合体
+  vhstool pbuild 名前 [並列数] 区間を分けて並列デコード（既定3本。映像のみ）
   vhstool auto 名前 [秒]    rec と build を続けて実行
   vhstool watch [名前]      信号を待ち受け、再生を検出したら自動で収録＆仕上げ
   vhstool clips 名前        確認用の短いクリップを作ってNASに置く
@@ -421,6 +492,7 @@ case "${1:-}" in
   rec)   cmd_rec "${2:?名前が必要}" "${3:-}" ;;
   watch) cmd_watch "${2:-}" ;;
   build) cmd_build "${2:?名前が必要}" ;;
+  pbuild) cmd_pbuild "${2:?名前が必要}" "${3:-3}" ;;
   auto)  cmd_rec "${2:?名前が必要}" "${3:-}" && cmd_build "$2" ;;
   clips) make_clips "${2:?名前が必要}" ;;
   push)  cmd_push  "${2:?名前が必要}" ;;
