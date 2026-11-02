@@ -20,7 +20,7 @@
 import csv, subprocess, sys
 import numpy as np
 
-NAS = "/Volumes/home/VHS_RF"
+NAS = "/Volumes/rf_tmp"
 MASTER = f"{NAS}/完成_tape01.mkv"
 MP4 = f"{NAS}/納品_標準_tape01.mp4"
 W, H = 640, 480

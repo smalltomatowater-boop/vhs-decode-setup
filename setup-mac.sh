@@ -118,7 +118,7 @@ step_tools() {
 
 step_nas() {
   c "NAS のマウント"
-  local NAS="${VHS_NAS_DIR:-/Volumes/home/VHS_RF}"
+  local NAS="${VHS_NAS_DIR:-/Volumes/rf_tmp}"
   if [ -d "$NAS" ]; then
     ok "$NAS （空き $(df -h "$NAS" | awk 'NR==2{print $4}')）"
   else

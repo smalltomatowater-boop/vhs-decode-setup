@@ -7,7 +7,7 @@
 # 削除はファイル名を一つずつ並べて行う。ディレクトリごと rm -rf しないのは、
 # 変数が空のまま渡る事故で原本まで消す経路を作らないため。
 set -uo pipefail
-NAS="${VHS_NAS_DIR:-/Volumes/home/VHS_RF}"
+NAS="${VHS_NAS_DIR:-/Volumes/rf_tmp}"
 MKVDIR="${VHS_MKV_DIR:-/Volumes/rf_mkv}"
 MP4DIR="${VHS_MP4_DIR:-/Volumes/rf_mp4}"
 NAME="${1:-}"

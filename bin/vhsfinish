@@ -40,7 +40,7 @@ PATH="$BIN:$HOME/.local/bin:$PATH"
 #   NAS    原本RF・参照キャプチャ・中間ファイル・確認用クリップ（作業用）
 #   MKVDIR 保存マスター(.mkv)
 #   MP4DIR 納品MP4
-NAS="${VHS_NAS_DIR:-/Volumes/home/VHS_RF}"
+NAS="${VHS_NAS_DIR:-/Volumes/rf_tmp}"
 MKVDIR="${VHS_MKV_DIR:-/Volumes/rf_mkv}"
 MP4DIR="${VHS_MP4_DIR:-/Volumes/rf_mp4}"
 PY="${VHS_PY:-/opt/homebrew/bin/python3}"

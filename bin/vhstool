@@ -11,7 +11,7 @@ PATH="$BIN:$HOME/.local/bin:$PATH"
 CXDEV=/dev/cxadc0
 RFRATE=28.636363
 PARAMS=/sys/class/cxadc/cxadc0/device/parameters
-NAS="${VHS_NAS_DIR:-/mnt/nas/VHS_RF}"   # 完成品の置き場。off にすると転送しない
+NAS="${VHS_NAS_DIR:-/mnt/rftmp}"   # 完成品の置き場。off にすると転送しない
 
 c()  { printf '\033[1;36m%s\033[0m\n' "$*"; }
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -554,7 +554,7 @@ vhstool - VHSのRF+通常キャプチャ自動化
   環境変数:
     VHS_THRESHOLD(既定6.0) VHS_ON_COUNT(3) VHS_OFF_COUNT(15)
     VHS_V4L_INPUT(既定1=S-Video, 0=Composite) VHS_V4L_STANDARD(既定ntsc)
-    VHS_NAS_DIR(既定 /mnt/nas/VHS_RF, off で転送しない)
+    VHS_NAS_DIR(既定 /mnt/rftmp, off で転送しない)
     VHS_BUILD_HERE(既定0。1にすると watch がこの機で仕上げまでやる)
 U
 }
