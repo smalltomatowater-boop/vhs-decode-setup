@@ -221,15 +221,38 @@ cmd_build() {
   [ -f "$rf" ] || { ng "$rf が無い"; return 1; }
 
   c "=== 1/4 RFをデコード ==="
-  vhs-decode --tf VHS --system NTSC -f $RFRATE -t "$(nproc)" --overwrite "$rf" "$d/dec" 2>&1 \
-    | grep -E 'Took|Completed' | sed 's/^/  /'
-  [ -f "$d/dec.tbc" ] || { ng "デコード失敗"; return 1; }
+  # 出力を一度ファイルに落としてから必要な行だけ見せる。
+  # 以前は直接 grep に通していたため、落ちたときのエラーが1行も残らず、
+  # 0バイトのTBCのまま次の工程へ進んでいた（tape03 で SIGSEGV を見逃した）。
+  local declog="$d/decode.out"
+  vhs-decode --tf VHS --system NTSC -f $RFRATE -t "$(nproc)" --overwrite "$rf" "$d/dec" \
+    > "$declog" 2>&1
+  local rc=$?
+  grep -E 'Took|Completed' "$declog" | sed 's/^/  /'
+  local sz; sz=$(stat -c%s "$d/dec.tbc" 2>/dev/null || echo 0)
+  if [ "$rc" -ne 0 ] || [ "$sz" -lt 1000000 ]; then
+    ng "デコード失敗（終了コード $rc / dec.tbc $sz バイト）"
+    echo "  --- 出力の末尾20行 ---"
+    tail -20 "$declog" | sed 's/^/  /'
+    echo "  --- ここまで ---"
+    [ "$rc" -ge 128 ] && wn "シグナル $((rc-128)) で落ちた。11ならSIGSEGV＝メモリを疑うこと"
+    return 1
+  fi
+  ok "TBC $(du -h "$d/dec.tbc" | cut -f1) ×2"
 
   c "=== 2/4 カラー化して書き出し ==="
   rm -f "$d/video.mkv"
-  "$BIN/tbc-video-export" --threads "$(nproc)" --chroma-decoder ntsc3d "$d/dec.tbc" "$d/video" 2>&1 \
-    | grep -iE 'export finished|error' | sed 's/^/  /'
-  [ -f "$d/video.mkv" ] || { ng "書き出し失敗"; return 1; }
+  local explog="$d/export.out"
+  "$BIN/tbc-video-export" --threads "$(nproc)" --chroma-decoder ntsc3d \
+    "$d/dec.tbc" "$d/video" > "$explog" 2>&1
+  local erc=$?
+  grep -iE 'export finished|error' "$explog" | sed 's/^/  /'
+  if [ "$erc" -ne 0 ] || [ ! -s "$d/video.mkv" ]; then
+    ng "書き出し失敗（終了コード $erc）"
+    echo "  --- 出力の末尾20行 ---"
+    tail -20 "$explog" | tr '\r' '\n' | tail -20 | sed 's/^/  /'
+    return 1
+  fi
   ok "映像 $(du -h "$d/video.mkv" | cut -f1)"
 
   if [ ! -f "$ref" ]; then
@@ -364,8 +387,43 @@ print(f'{x.std():.2f}' if x.size>1000 else '0')
   ok "RF   $(du -h "$rf" | cut -f1)"
   [ -f "$ref" ] && ok "参照 $(du -h "$ref" | cut -f1)"
 
-  c "=== 仕上げに入る ==="
-  cmd_build "$name"
+  # ここから先をこの機でやるかどうか。
+  # 搭載メモリに不良があり、デコードが SIGSEGV で落ちる／書き出しが静かに
+  # ビットを壊す（tape01.mkv に19か所焼き付けて失った）。そのため既定では
+  # 収録だけ行い、原本をNASへ送って Mac の vhsfinish に渡す。
+  # メモリを交換して3回読み検査が通ったら VHS_BUILD_HERE=1 で元に戻せる。
+  if [ "${VHS_BUILD_HERE:-0}" = 1 ]; then
+    c "=== 仕上げに入る（この機で）==="
+    wn "VHS_BUILD_HERE=1。メモリ不良が直っていることを確認済みか？"
+    cmd_build "$name"
+  else
+    c "=== 原本をNASへ送る ==="
+    cmd_pushrf "$name" || { wn "転送できなかった。後で vhstool pushrf $name を実行すること"; return 1; }
+    echo
+    c "=== この機での作業は終わり ==="
+    echo "  続きは Mac で:"
+    echo "      vhsfinish $name"
+    echo "  この機で仕上げまでやるなら（メモリ交換後）:"
+    echo "      VHS_BUILD_HERE=1 vhstool build $name"
+  fi
+}
+
+cmd_pushrf() {
+  # 原本RFと参照キャプチャをNASへ送る。名前は Mac 側の vhsfinish が探す形
+  # （rf_<名前>.u8 / ref_<名前>.mkv）に合わせる。
+  local name=$1 d="$WORK/$1"
+  [ "$NAS" = "off" ] && { wn "VHS_NAS_DIR=off なので転送しない"; return 0; }
+  [ -d "$NAS" ] || { ng "$NAS が見えない（NASがマウントされていない）"; return 1; }
+  local pair src dst a b
+  for pair in "rf.u8 rf_${name}.u8" "ref.mkv ref_${name}.mkv"; do
+    set -- $pair; src="$d/$1"; dst="$NAS/$2"
+    [ -f "$src" ] || { wn "$src が無いので飛ばす"; continue; }
+    echo "  $1 → $2  ($(du -h "$src" | cut -f1))"
+    rsync -h --inplace "$src" "$dst" || { ng "転送失敗 $1"; return 1; }
+    a=$(stat -c%s "$src"); b=$(stat -c%s "$dst" 2>/dev/null || echo 0)
+    if [ "$a" = "$b" ]; then ok "$a バイト一致"
+    else ng "サイズが合わない（元 $a / 先 $b）"; return 1; fi
+  done
 }
 
 make_clips() {
@@ -470,20 +528,26 @@ vhstool - VHSのRF+通常キャプチャ自動化
   vhstool build 名前        デコード→カラー化→音声合体
   vhstool pbuild 名前 [並列数] 区間を分けて並列デコード（既定3本。映像のみ）
   vhstool auto 名前 [秒]    rec と build を続けて実行
-  vhstool watch [名前]      信号を待ち受け、再生を検出したら自動で収録＆仕上げ
+  vhstool watch [名前]      信号を待ち受け、再生を検出したら自動で収録→NASへ転送
+  vhstool pushrf 名前       原本RFと参照キャプチャをNASへ送る（Macで仕上げる用）
   vhstool clips 名前        確認用の短いクリップを作ってNASに置く
   vhstool push 名前         完成品をNASへ転送（buildの最後に自動実行される）
   vhstool clean 名前        中間ファイル(TBC等)を削除。完成品とrf.u8は残す
   vhstool clean 名前 all    NAS転送済みを確認した上で rf.u8 も削除
   vhstool list             収録一覧
 
-  例:  vhstool auto tape01 7200     2時間録って自動で仕上げる
-       vhstool watch tape01         再生ボタンを押すまで待ち、終わったら自動で仕上げる
+  例:  vhstool watch tape01         再生ボタンを押すまで待ち、録れたらNASへ送る
+       → そのあと Mac で  vhsfinish tape01
+
+  この機は収録までを担当する。デコードと書き出しは Mac で行う。
+  搭載メモリに不良があり、デコードが落ちる・書き出しが静かにビットを壊す
+  ため。メモリ交換後は VHS_BUILD_HERE=1 でこの機でも仕上げられる。
 
   環境変数:
     VHS_THRESHOLD(既定6.0) VHS_ON_COUNT(3) VHS_OFF_COUNT(15)
     VHS_V4L_INPUT(既定1=S-Video, 0=Composite) VHS_V4L_STANDARD(既定ntsc)
     VHS_NAS_DIR(既定 /mnt/nas/VHS_RF, off で転送しない)
+    VHS_BUILD_HERE(既定0。1にすると watch がこの機で仕上げまでやる)
 U
 }
 
@@ -496,6 +560,7 @@ case "${1:-}" in
   auto)  cmd_rec "${2:?名前が必要}" "${3:-}" && cmd_build "$2" ;;
   clips) make_clips "${2:?名前が必要}" ;;
   push)  cmd_push  "${2:?名前が必要}" ;;
+  pushrf) cmd_pushrf "${2:?名前が必要}" ;;
   clean) cmd_clean "${2:?名前が必要}" "${3:-}" ;;
   list)  cmd_list ;;
   *)     usage ;;
