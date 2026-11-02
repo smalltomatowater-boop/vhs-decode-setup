@@ -171,21 +171,45 @@ cmd_build() {
   $VENV "$HOME/bin/vhsalign.py" "$d/video.mkv" "$ref" || { ng "同期計算に失敗"; return 1; }
 
   c "=== 4/4 音声を合体 ==="
-  local off drift conf
-  off=$($VENV -c "import json;print(json.load(open('/tmp/vhsalign.json'))['offset_sec'])")
+  local trim drift conf
+  trim=$($VENV -c "import json;print(json.load(open('/tmp/vhsalign.json'))['trim_sec'])")
   drift=$($VENV -c "import json;print(json.load(open('/tmp/vhsalign.json'))['drift'])")
   conf=$($VENV -c "import json;print(json.load(open('/tmp/vhsalign.json'))['confidence'])")
   [ "$conf" = "低い" ] && wn "同期の信頼度が低い。できた動画の音ズレを確認して"
 
+  # 参照が先に始まっていれば先頭を切り落とす(-ss)。逆なら遅らせる(-itsoffset)。
+  local ain
+  if $VENV -c "import sys;sys.exit(0 if $trim >= 0 else 1)"; then
+    ain="-ss $trim"
+    echo "  参照の先頭 ${trim} 秒を切り落として頭を揃える"
+  else
+    local neg; neg=$($VENV -c "print(-($trim))")
+    ain="-itsoffset $neg"
+    echo "  参照を ${neg} 秒ぶん遅らせて頭を揃える"
+  fi
+
   local rate; rate=$($VENV -c "print(48000*$drift)")
+  # shellcheck disable=SC2086
   ffmpeg -nostdin -v error -y \
-    -i "$d/video.mkv" -itsoffset "$off" -i "$ref" \
+    -i "$d/video.mkv" $ain -i "$ref" \
     -map 0:v -map 1:a \
     -af "asetrate=$rate,aresample=48000:resampler=soxr" \
     -c:v copy -c:a flac -compression_level 8 \
     -shortest "$d/$name.mkv"
+
+  # 自己検証: 音声トラックの開始時刻が映像と揃っているか。
+  # 符号を間違えるとここが大きくずれるので、気づかないまま完成させない。
+  local ast
+  ast=$(ffprobe -v error -select_streams a:0 -show_entries stream=start_time \
+        -of default=nw=1:nk=1 "$d/$name.mkv" 2>/dev/null)
+  if $VENV -c "import sys;sys.exit(0 if abs(float('${ast:-0}')) <= 0.2 else 1)" 2>/dev/null; then
+    ok "音声の開始時刻 ${ast}s（映像と揃っている）"
+  else
+    ng "音声の開始時刻が ${ast}s もずれている。同期の符号を疑うこと"
+  fi
   [ -f "$d/$name.mkv" ] || { ng "合体に失敗"; return 1; }
   ok "完成 → $d/$name.mkv  ($(du -h "$d/$name.mkv" | cut -f1))"
+  make_clips "$name" || wn "確認用クリップを作れなかった"
   cmd_push "$name" || wn "転送は後で vhstool push $name を実行すること"
 }
 
@@ -274,6 +298,36 @@ print(f'{x.std():.2f}' if x.size>1000 else '0')
   cmd_build "$name"
 }
 
+make_clips() {
+  # 完成品から短い確認用クリップを作ってNASに置く。
+  # 音ズレの確認には再生用PCで再生する必要があり、そのためにはNAS上に
+  # 無いと始まらない。本体20GBの転送を待たずに検証できるようにする。
+  local name=$1 src="$WORK/$1/$1.mkv"
+  [ -f "$src" ] || return 1
+  local dur; dur=$($VENV -c "
+import subprocess
+o=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration',
+                  '-of','default=nw=1:nk=1','$src'],capture_output=True,text=True).stdout
+print(int(float(o)))" 2>/dev/null)
+  [ -n "$dur" ] || return 1
+  c "=== 確認用クリップを作成 ==="
+  local out="$NAS/_確認用"
+  [ "$NAS" = "off" ] && out="$WORK/$name/_確認用"
+  mkdir -p "$out" 2>/dev/null || return 1
+  local i=1
+  for T in $((dur/14)) $((dur/2)) $((dur*93/100)); do
+    ffmpeg -nostdin -v error -y -ss "$T" -i "$src" -t 20 \
+      -vf "yadif,scale=640:480:flags=lanczos,setsar=1" \
+      -c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k \
+      "$out/${name}_確認_${i}.mp4" 2>/dev/null
+    printf '  %d本目 %02d:%02d から20秒  %s\n' "$i" $((T/60)) $((T%60)) \
+      "$(du -h "$out/${name}_確認_${i}.mp4" 2>/dev/null | cut -f1)"
+    i=$((i+1))
+  done
+  ok "$out に配置"
+  echo "  再生用PCで3本とも確認すること。特に3本目（終盤）でズレが増えていないか"
+}
+
 cmd_push() {
   local name=$1 src="$WORK/$1/$1.mkv"
   [ "$NAS" = "off" ] && { wn "VHS_NAS_DIR=off なので転送しない"; return 0; }
@@ -346,6 +400,7 @@ vhstool - VHSのRF+通常キャプチャ自動化
   vhstool build 名前        デコード→カラー化→音声合体
   vhstool auto 名前 [秒]    rec と build を続けて実行
   vhstool watch [名前]      信号を待ち受け、再生を検出したら自動で収録＆仕上げ
+  vhstool clips 名前        確認用の短いクリップを作ってNASに置く
   vhstool push 名前         完成品をNASへ転送（buildの最後に自動実行される）
   vhstool clean 名前        中間ファイル(TBC等)を削除。完成品とrf.u8は残す
   vhstool clean 名前 all    NAS転送済みを確認した上で rf.u8 も削除
@@ -367,6 +422,7 @@ case "${1:-}" in
   watch) cmd_watch "${2:-}" ;;
   build) cmd_build "${2:?名前が必要}" ;;
   auto)  cmd_rec "${2:?名前が必要}" "${3:-}" && cmd_build "$2" ;;
+  clips) make_clips "${2:?名前が必要}" ;;
   push)  cmd_push  "${2:?名前が必要}" ;;
   clean) cmd_clean "${2:?名前が必要}" "${3:-}" ;;
   list)  cmd_list ;;

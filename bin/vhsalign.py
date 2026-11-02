@@ -141,7 +141,11 @@ def main(rf_video, ref_video):
 
 
 def dump(offset_sec, offset_frames, drift, peak, conf, fps, ratio=0.0):
-    json.dump({"offset_sec": offset_sec, "offset_frames": offset_frames,
+    # trim_sec = 参照の先頭から切り落とす秒数。
+    # 参照が先に始まっている（offset_sec > 0）なら、その分を捨てれば頭が揃う。
+    # ffmpeg の -itsoffset は「遅らせる」方向なので、符号を取り違えないよう
+    # 用途そのものを名前にしてある。
+    json.dump({"trim_sec": offset_sec, "offset_frames": offset_frames,
                "drift": drift, "fps": fps, "peak": peak,
                "confidence": conf, "peak_ratio": ratio},
               open("/tmp/vhsalign.json", "w"))
