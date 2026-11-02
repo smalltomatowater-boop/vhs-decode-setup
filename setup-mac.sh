@@ -101,18 +101,14 @@ step_tbctools() {
 step_tools() {
   c "仕上げ用スクリプトの配置"
   mkdir -p "$HOME/bin"
+  # コピーではなくシンボリックリンクにする。vhsfinish は profiles/ を
+  # リポジトリ本体からの相対で読むため、コピーだとプロファイルを見失う。
+  # リンクは自分で辿って実体の位置を出すようにしてある。
+  # git pull するだけで中身が新しくなる利点もある。
   for f in vhsfinish vhsclean vhsdeliver vhsverify vhsalign.py vhsqa.py; do
-    cp "$REPO/bin/$f" "$HOME/bin/$f"
-    chmod +x "$HOME/bin/$f"
+    ln -sf "$REPO/bin/$f" "$HOME/bin/$f"
   done
-  ok "$HOME/bin/ に6本配置"
-
-  # vhsfinish は $REPO/profiles と $REPO/bin/vhsalign.py を
-  # 自分の位置から相対で探す。~/bin のコピーだけでは profiles が無いので、
-  # リポジトリの bin から直接呼ぶ方を正とする。
-  wn "~/bin のコピーは入口専用。プロファイルを読む本体は $REPO/bin/vhsfinish"
-  echo "    PATHに通すならこちらを勧める:"
-  echo "      echo 'export PATH=\"$REPO/bin:\$PATH\"' >> ~/.zshrc"
+  ok "$HOME/bin/ に6本リンク（実体は $REPO/bin/）"
 
   case ":$PATH:" in
     *":$HOME/bin:"*) ok "~/bin は PATH に入っている" ;;

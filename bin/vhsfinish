@@ -20,7 +20,15 @@
 # マスターは上書きしない。完成_<名前>.mkv が既にあれば必ず止まる。
 set -uo pipefail
 
-HERE=$(cd "$(dirname "$0")" && pwd)
+# ~/bin からのシンボリックリンク越しに呼ばれても、profiles と vhsalign.py を
+# 置いてあるリポジトリ本体を見つけられるよう、リンクを辿って実体の場所を出す。
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  D=$(cd -P "$(dirname "$SELF")" && pwd)
+  SELF=$(readlink "$SELF")
+  case "$SELF" in /*) ;; *) SELF="$D/$SELF" ;; esac
+done
+HERE=$(cd -P "$(dirname "$SELF")" && pwd)
 REPO=$(dirname "$HERE")
 BIN=$HOME/src/tbc-tools/build/bin
 # $BIN を先に置く。~/.local/bin には古い tbc-video-export 0.1.8 が残っていて、
