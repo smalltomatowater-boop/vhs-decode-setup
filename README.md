@@ -1,3 +1,5 @@
+***日本語** · [English](README.en.md)*
+
 # vhs-decode-setup
 
 VHSテープを **RF信号から直接デコード** する環境の構築記録と自動化ツール。
@@ -342,7 +344,7 @@ setup-mac.sh verify       必要なツールが揃っているか確認
 置き場はNASの共有ごとに分かれている（`home` の下のフォルダではない）。
 
 ```sh
-VHS_NAS_DIR=/Volumes/home/VHS_RF   # 原本RF・参照キャプチャ・中間・確認用
+VHS_NAS_DIR=/Volumes/rf_tmp        # 原本RF・参照キャプチャ・中間・確認用
 VHS_MKV_DIR=/Volumes/rf_mkv        # 保存マスター(.mkv)
 VHS_MP4_DIR=/Volumes/rf_mp4        # 納品MP4
 ```
@@ -396,7 +398,7 @@ VHS_V4L_INPUT=0   vhstool rec tape01 60  # 0=Composite 1=S-Video（既定1）
 マスターを上書きしないのは意図的な設計。作り直すときは人が手で退避させる。
 
 ```sh
-mv "/Volumes/home/VHS_RF/完成_tape02.mkv" "/Volumes/home/VHS_RF/旧_完成_tape02.mkv"
+mv "/Volumes/rf_mkv/完成_tape02.mkv" "/Volumes/rf_mkv/旧_完成_tape02.mkv"
 vhsfinish tape02 --from merge
 ```
 
@@ -476,7 +478,7 @@ vhsdeliver tape01 contrast-v1  # コントラスト重視版
 #### 出力後は必ず自動チェックを通す
 
 ```sh
-vhsverify /mnt/nas/VHS_RF/納品_標準_tape01.mp4 /mnt/nas/VHS_RF/完成_tape01.mkv
+vhsverify /Volumes/rf_mp4/tape01_標準.mp4 /Volumes/rf_mkv/完成_tape01.mkv
 ```
 
 ストリーム構成・コーデック・`color_range`・解像度・フレームレート・
@@ -489,7 +491,7 @@ vhsverify /mnt/nas/VHS_RF/納品_標準_tape01.mp4 /mnt/nas/VHS_RF/完成_tape01
 ### NASへの転送
 
 `build` が終わると完成品を自動で NAS に転送する（`VHS_NAS_DIR`、既定
-`/mnt/nas/VHS_RF`）。転送後にサイズを照合し、一致しなければ失敗として扱う。
+`/mnt/rftmp`）。転送後にサイズを照合し、一致しなければ失敗として扱う。
 
 NAS は `nofail,_netdev,x-systemd.automount` で fstab に登録してあるので、
 NAS が落ちていても起動は止まらず、アクセス時に自動でマウントされる。
@@ -674,6 +676,8 @@ HR-S7500 / HR-S2912I / HR3800U / SR-MV45 いずれも同じ。JVCの標準配置
 ---
 
 ## English summary
+
+**Full English documentation: [README.en.md](README.en.md)**
 
 Tooling and patches for capturing VHS tapes via RF (software decoding with
 `vhs-decode`) on a 2011-era PC running Ubuntu 24.04 / kernel 7.0.

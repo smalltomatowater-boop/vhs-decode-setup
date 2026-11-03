@@ -1,3 +1,5 @@
+***日本語** · [English](verify-standard-v1.en.md)*
+
 # profile-standard-v1 検証記録
 
 - 検証日: 2026-11-02
