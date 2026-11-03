@@ -248,7 +248,7 @@ cmd_build() {
   local erc=$?
   grep -iE 'export finished|error' "$explog" | sed 's/^/  /'
   if [ "$erc" -ne 0 ] || [ ! -s "$d/video.mkv" ]; then
-    ng "書き出し失敗（終了コード $erc）"
+    ng "書き出し失敗（終了コード ${erc}）"
     echo "  --- 出力の末尾20行 ---"
     tail -20 "$explog" | tr '\r' '\n' | tail -20 | sed 's/^/  /'
     return 1
@@ -426,7 +426,7 @@ cmd_pushrf() {
     rsync -h --inplace "$src" "$tmp" || { ng "転送失敗 $1"; return 1; }
     a=$(stat -c%s "$src"); b=$(stat -c%s "$tmp" 2>/dev/null || echo 0)
     if [ "$a" != "$b" ]; then
-      ng "サイズが合わない（元 $a / 先 $b）。一時ファイルを残すので調べること: $tmp"
+      ng "サイズが合わない（元 $a / 先 ${b}）。一時ファイルを残すので調べること: $tmp"
       return 1
     fi
     mv -f "$tmp" "$dst" || { ng "改名に失敗 $tmp → $dst"; return 1; }
@@ -483,7 +483,7 @@ cmd_push() {
   if [ "$dsz" = "$sz" ]; then
     ok "転送完了（サイズ一致 $sz バイト）"
   else
-    ng "サイズが合わない（元 $sz / 先 $dsz）"; return 1
+    ng "サイズが合わない（元 $sz / 先 ${dsz}）"; return 1
   fi
 }
 

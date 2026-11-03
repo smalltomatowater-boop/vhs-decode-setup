@@ -135,7 +135,7 @@ if ! done_of check; then
     [ -f "$f" ] || continue
     s1=$(stat -f%z "$f"); sleep 4; s2=$(stat -f%z "$f")
     if [ "$s1" != "$s2" ]; then
-      ng "$(basename "$f") のサイズが増え続けている（$s1 → $s2）"
+      ng "$(basename "$f") のサイズが増え続けている（$s1 → ${s2}）"
       echo "  まだ転送中。終わってから出直すこと"
       exit 1
     fi
@@ -145,7 +145,7 @@ if ! done_of check; then
     command -v "$t" >/dev/null || { ng "$t が無い"; exit 1; }
   done
   TVE=$("$BIN/tbc-video-export" --version 2>&1 | head -1)
-  case "$TVE" in 0.*) ng "tbc-video-export が $TVE（0.1.8は旧名を探して必ず失敗する）"; exit 1 ;; esac
+  case "$TVE" in 0.*) ng "tbc-video-export が ${TVE}（0.1.8は旧名を探して必ず失敗する）"; exit 1 ;; esac
   ok "tbc-video-export $TVE"
   "$PY" -c 'import numpy' 2>/dev/null || { ng "$PY に numpy が無い"; exit 1; }
   ok "python $("$PY" -c 'import numpy,platform;print(platform.python_version(),"numpy",numpy.__version__)')"

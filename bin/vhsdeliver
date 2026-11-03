@@ -62,7 +62,7 @@ VF="$DEINTERLACE,$CROP"
 VF="$VF,lutyuv=y='clip((val-$BLACK)*1023/(1023-$BLACK),0,1023)'"
 VF="$VF,$NR,$SCALE"
 
-echo "=== $PROFILE_NAME（黒点 $BLACK）  $(date +%H:%M:%S) ==="
+echo "=== ${PROFILE_NAME}（黒点 ${BLACK}）  $(date +%H:%M:%S) ==="
 echo "  入力 $SRC"
 echo "  出力 $OUT"
 ffmpeg -nostdin -v error -i "$SRC" -vf "$VF" \
