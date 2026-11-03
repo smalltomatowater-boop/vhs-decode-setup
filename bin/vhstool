@@ -12,6 +12,12 @@ CXDEV=/dev/cxadc0
 RFRATE=28.636363
 PARAMS=/sys/class/cxadc/cxadc0/device/parameters
 NAS="${VHS_NAS_DIR:-/mnt/rftmp}"   # 完成品の置き場。off にすると転送しない
+# 無線は USB 2.0 の RTL8822BU 1本しかない。上限(480Mb/s)に張り付かせたまま
+# 何十分も流すと、ドライバが associated のまま送信経路だけ固まる（2026-11-03）。
+# 既定を 25MB/s に抑える。有線が入ったら VHS_BWLIMIT=0 で解除してよい。
+BWLIMIT="${VHS_BWLIMIT:-25000}"            # KB/s。0 で無制限
+RS=(rsync -h --inplace)
+[ "${BWLIMIT}" != "0" ] && RS+=(--bwlimit="${BWLIMIT}")
 
 c()  { printf '\033[1;36m%s\033[0m\n' "$*"; }
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -423,7 +429,7 @@ cmd_pushrf() {
     set -- $pair; src="$d/$1"; dst="$NAS/$2"; tmp="$NAS/.$2.part"
     [ -f "$src" ] || { wn "$src が無いので飛ばす"; continue; }
     echo "  $1 → $2  ($(du -h "$src" | cut -f1))"
-    rsync -h --inplace "$src" "$tmp" || { ng "転送失敗 $1"; return 1; }
+    "${RS[@]}" "$src" "$tmp" || { ng "転送失敗 $1"; return 1; }
     a=$(stat -c%s "$src"); b=$(stat -c%s "$tmp" 2>/dev/null || echo 0)
     if [ "$a" != "$b" ]; then
       ng "サイズが合わない（元 $a / 先 ${b}）。一時ファイルを残すので調べること: $tmp"
@@ -475,7 +481,7 @@ cmd_push() {
   echo "  $src  ($(( sz / 1048576 )) MB)"
   echo "  → $NAS/$name.mkv"
   if command -v rsync >/dev/null; then
-    rsync -h --inplace "$src" "$NAS/$name.mkv"
+    "${RS[@]}" "$src" "$NAS/$name.mkv"
   else
     cp "$src" "$NAS/$name.mkv"
   fi
