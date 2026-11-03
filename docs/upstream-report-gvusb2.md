@@ -1,52 +1,63 @@
-# harrypm/GV-USB2-Linux への報告ドラフト
+# Upstream report: GV-USB2 driver
 
-2つは独立した問題なので、PRも分けて出すのが通りやすい。
+Target repository: **[Isaac-Lozano/GV-USB2-Driver](https://github.com/Isaac-Lozano/GV-USB2-Driver)**
+(48 stars, issues enabled). Not `harrypm/GV-USB2-Linux`, which is a fork with
+issues disabled — a pull request there would reach nobody. The two source files
+touched here are byte-identical between the two (verified by blob SHA), so the
+patches apply unchanged.
+
+Status checked 2026-11-03.
 
 ---
 
-## PR 1: Fix build on Linux 6.10+ (vb2_ops wait_prepare/wait_finish removed)
+## Issue 1 — build failure on Linux 6.10+ : **already reported, do not duplicate**
 
-**Title:** `Fix build on Linux 6.10+: drop removed vb2_ops wait_prepare/wait_finish`
+- Issue [#14](https://github.com/Isaac-Lozano/GV-USB2-Driver/issues/14)
+  "Compilation fails on Linux kernel 7 and above"
+- PR [#13](https://github.com/Isaac-Lozano/GV-USB2-Driver/pull/13)
+  `zooksman:kernel7-fix`, open since 2026-06-13
 
-**Body:**
+PR #13's diff is identical to
+[`patches/gvusb2-01-vb2-wait-callbacks.patch`](../patches/gvusb2-01-vb2-wait-callbacks.patch):
+
+```diff
+-	.wait_prepare    = vb2_ops_wait_prepare,
+-	.wait_finish     = vb2_ops_wait_finish,
+```
+
+**Do not open a competing pull request.** It has been open for months, which
+usually means the maintainer cannot verify it. What helps is an independent
+confirmation on different hardware. Draft comment for #13:
 
 ```markdown
-### Problem
+Confirming this fix on different hardware.
 
-The module fails to build on Linux 6.10 and newer:
+Dell Vostro 460 (H67, i7-2600), Ubuntu 24.04.4 LTS, kernel 7.0.0-42-generic,
+x86_64, I-O DATA GV-USB2 (04bb:0532).
 
-```
-gvusb2-v4l2.c:203:10: error: 'const struct vb2_ops' has no member named 'wait_prepare'
-gvusb2-v4l2.c:203:28: error: 'vb2_ops_wait_prepare' undeclared here (not in a function)
-gvusb2-v4l2.c:204:10: error: 'const struct vb2_ops' has no member named 'wait_finish'
-gvusb2-v4l2.c:204:28: error: 'vb2_ops_wait_finish' undeclared here (not in a function)
-```
+Without the patch the build fails exactly as in #14. With it the module builds
+cleanly and the device streams 720x480 UYVY at 29.97fps on both S-Video and
+composite.
 
-`wait_prepare` / `wait_finish` were removed from `struct vb2_ops`. videobuf2 now
-drops and reacquires `q->lock` itself, so drivers that set `q->lock` need no
-callbacks at all.
-
-### Fix
-
-Remove the two assignments. `gvusb2_vb2_setup()` already sets
-
-```c
-vb2q->lock = &dev->vb2q_lock;
-```
-
-so the locking behaviour is unchanged.
-
-### Tested on
-
-Ubuntu 24.04.4 LTS, kernel 6.14 / 7.0, x86_64, I-O DATA GV-USB2 (04bb:0532).
-Builds cleanly and the device streams.
+`gvusb2_vb2_setup()` already does `vb2q->lock = &dev->vb2q_lock;`, so videobuf2
+takes the queue lock itself and the removed callbacks were redundant even on
+older kernels. Locking behaviour is unchanged.
 ```
 
 ---
 
-## PR 2: Fix streaming failure on EHCI hosts with >4GB RAM and no IOMMU
+## Issue 2 — streaming fails on EHCI hosts with >4GB RAM and no IOMMU : **not reported anywhere**
 
-**Title:** `Reduce isoc URB size so DMA mappings fit the swiotlb 256KB limit`
+Searched the upstream repository's issues and pull requests for `swiotlb`,
+`urb submit failed`, `ISOCH_PACKETS`, `bounce` and `EAGAIN`: zero hits. A
+GitHub-wide code search for the changed constant finds no other fork carrying
+this fix. This one is worth opening.
+
+**Open an issue first, then the pull request referencing it.** The reproduction
+conditions are unusual enough that a maintainer without the hardware will want
+the reasoning written down somewhere permanent.
+
+**PR title:** `Reduce isoc URB size so DMA mappings fit the swiotlb 256KB limit`
 
 **Body:**
 
@@ -108,15 +119,22 @@ Ubuntu 24.04.4 LTS kernel 7.0, I-O DATA GV-USB2 (04bb:0532).
 
 Before: streaming never starts, every URB submit returns -11.
 After: 720x480 UYVY at 29.97fps, no URB errors, S-Video and composite both work.
+
+Note: this needs #13 applied first, otherwise the module does not build on
+kernel 6.10+ and the change cannot be tested.
 ```
 
 ---
 
-## 出すときの注意
+## Notes for submitting
 
-- **PR 2 を先に出さない。** PR 1 が無いとそもそもビルドできないので、
-  レビュアーが検証できない。
-- ハードウェアが特殊なので、再現条件（EHCI / >4GB / IOMMU無し）を
-  本文に明記しておくこと。手元で再現できないレビュアーが多いはず。
-- `GVUSB2_NUM_URBS` を増やす方は好みが分かれるかもしれない。
-  もし渋られたら、パケット数の削減だけでも機能はする。
+- **Do not open PR 2 before #13 is resolved.** Without it the module does not
+  build on a current kernel, so a reviewer cannot verify anything.
+- Spell out the reproduction conditions (EHCI / >4GB / no IOMMU) in the body.
+  Most reviewers will not be able to reproduce it on their own hardware.
+- Doubling `GVUSB2_NUM_URBS` is the part most open to taste. If a maintainer
+  objects, reducing the packet count alone is enough to make it work.
+- Upstream is slow: the oldest open PR dates from 2022-01-27 and the last
+  commit to master is 2020-07-28. Expect this to sit. It is still the right
+  place — a report in a repository with issues enabled stays findable, which a
+  fix buried in a private fork does not.

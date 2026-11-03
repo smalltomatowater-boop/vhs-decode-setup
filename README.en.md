@@ -58,7 +58,7 @@ VHS digitisation.
 | PC | Dell Vostro 460 / Core i7-2600 (4C8T) / 16GB / Ubuntu 24.04.4 LTS |
 | Kernel | 7.0.0-42-generic |
 | RF capture | Conexant CX23880 (PCI) + [cxadc](https://github.com/happycube/cxadc-linux3) |
-| Reference capture | I-O DATA GV-USB2 (USB) + [GV-USB2-Linux](https://github.com/harrypm/GV-USB2-Linux) |
+| Reference capture | I-O DATA GV-USB2 (USB) + [GV-USB2-Driver](https://github.com/Isaac-Lozano/GV-USB2-Driver) |
 | Deck | JVC HR-VX100 |
 | Capture target | Internal SATA SSD, 238GB, dedicated ext4 (measured 397MB/s) |
 | Finishing machine | Apple M4 10-core / 32GB / macOS 26.5.1 (everything from export onwards) |
@@ -712,4 +712,4 @@ they apply to.
 - [cxadc-linux3](https://github.com/happycube/cxadc-linux3) — GPLv2
 - [vhs-decode](https://github.com/oyvindln/vhs-decode) — GPLv3
 - [tbc-tools](https://github.com/harrypm/tbc-tools) — GPLv3
-- [GV-USB2-Linux](https://github.com/harrypm/GV-USB2-Linux) — GPLv2
+- [GV-USB2-Driver](https://github.com/Isaac-Lozano/GV-USB2-Driver) — GPLv2

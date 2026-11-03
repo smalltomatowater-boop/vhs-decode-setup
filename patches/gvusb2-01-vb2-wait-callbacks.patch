@@ -6,8 +6,8 @@
  	.stop_streaming  = gvusb2_vb2_stop_streaming,
 -	.wait_prepare    = vb2_ops_wait_prepare,
 -	.wait_finish     = vb2_ops_wait_finish,
-+	/* [local patch] Linux 6.10 以降 vb2_ops から wait_prepare/wait_finish が
-+	 * 削除された。vb2q->lock を設定済みなので vb2 が自前でロックを扱う。 */
++	/* [local patch] Linux 6.10 removed wait_prepare/wait_finish from vb2_ops.
++	 * vb2q->lock is already set, so videobuf2 handles the locking itself. */
  };
  
  int gvusb2_vb2_setup(struct gvusb2_vid *dev)

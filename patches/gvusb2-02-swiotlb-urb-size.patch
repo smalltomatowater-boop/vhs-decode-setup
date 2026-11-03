@@ -6,12 +6,12 @@
  
 -#define GVUSB2_NUM_URBS 4
 -#define GVUSB2_NUM_ISOCH_PACKETS 0x100
-+/* [local patch] EHCI + 4GB超メモリ + IOMMU無しの環境では DMA が swiotlb 経由に
-+ * なる。swiotlb の1回あたり上限は 256KB だが、元の値では
-+ *   0x100 packets * 0xc00 bytes = 786432 bytes
-+ * を要求して "swiotlb buffer is full" → urb submit failed (-11) になる。
-+ * パケット数を 1/4 にして 0x40 * 0xc00 = 196608 bytes に収め、
-+ * 減ったバッファ量は URB 数を倍にして補う。 */
++/* [local patch] On EHCI hosts with more than 4GB of RAM and no IOMMU, DMA goes
++ * through swiotlb bounce buffers, where a single mapping cannot exceed 256KB.
++ * The original values request 0x100 packets * 0xc00 bytes = 786432 bytes,
++ * which fails with "swiotlb buffer is full" -> urb submit failed (-11).
++ * Quartering the packet count gives 0x40 * 0xc00 = 196608 bytes, and the lost
++ * buffering is made up for by doubling the number of URBs. */
 +#define GVUSB2_NUM_URBS 8
 +#define GVUSB2_NUM_ISOCH_PACKETS 0x40
  #define GVUSB2_MAX_AUDIO_PACKET_SIZE 0x100

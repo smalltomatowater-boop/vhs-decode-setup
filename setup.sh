@@ -154,8 +154,8 @@ step_tbctools() {
 step_gvusb2() {
   c "GV-USB2 ドライバ"
   mkdir -p "$SRC" && cd "$SRC"
-  [ -d GV-USB2-Linux ] || git clone --depth 1 https://github.com/harrypm/GV-USB2-Linux.git
-  cd GV-USB2-Linux
+  [ -d GV-USB2-Driver ] || git clone --depth 1 https://github.com/Isaac-Lozano/GV-USB2-Driver.git
+  cd GV-USB2-Driver
 
   # (a) Linux 6.10 以降 vb2_ops から wait_prepare/wait_finish が削除された
   grep -q 'wait_prepare' gvusb2-v4l2.c && {

@@ -54,7 +54,7 @@ VHSデジタル化のために古いPCを用意すると踏みやすい組み合
 | PC | Dell Vostro 460 / Core i7-2600 (4C8T) / 16GB / Ubuntu 24.04.4 LTS |
 | カーネル | 7.0.0-42-generic |
 | RFキャプチャ | Conexant CX23880 (PCI) + [cxadc](https://github.com/happycube/cxadc-linux3) |
-| 参照キャプチャ | I-O DATA GV-USB2 (USB) + [GV-USB2-Linux](https://github.com/harrypm/GV-USB2-Linux) |
+| 参照キャプチャ | I-O DATA GV-USB2 (USB) + [GV-USB2-Driver](https://github.com/Isaac-Lozano/GV-USB2-Driver) |
 | デッキ | ビクター HR-VX100 |
 | 収録先 | 内蔵SATA SSD 238GB を ext4 で専用化（実測 397MB/s） |
 | 仕上げ機 | Apple M4 10コア / 32GB / macOS 26.5.1（書き出し以降を担当） |
@@ -671,7 +671,7 @@ HR-S7500 / HR-S2912I / HR3800U / SR-MV45 いずれも同じ。JVCの標準配置
 - [cxadc-linux3](https://github.com/happycube/cxadc-linux3) — GPLv2
 - [vhs-decode](https://github.com/oyvindln/vhs-decode) — GPLv3
 - [tbc-tools](https://github.com/harrypm/tbc-tools) — GPLv3
-- [GV-USB2-Linux](https://github.com/harrypm/GV-USB2-Linux) — GPLv2
+- [GV-USB2-Driver](https://github.com/Isaac-Lozano/GV-USB2-Driver) — GPLv2
 
 ---
 
