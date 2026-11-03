@@ -8,6 +8,19 @@ signal** and decoding them in software.
 A 2011-era second-hand PC running Ubuntu 24.04, a CX card tapping the raw FM
 signal off the deck, and `vhs-decode` taking it all the way to colour video.
 
+> **What this document is**
+>
+> This is **a build log for one specific machine** (a 2011 PC, a CX23880 and a
+> GV-USB2), not a recommended configuration. If you are starting out, read the
+> project's own material first.
+>
+> - [VHS-Decode Wiki](https://github.com/oyvindln/vhs-decode/wiki) — the official procedure and recommended hardware
+> - [MISRC-GUI](https://github.com/harrypm/MISRC-GUI) — the unified workflow for capture and ingest
+>
+> If anything here is useful, it is **the record of what goes wrong on older
+> hardware**. The current recommended setup (MISRC, standard amplifier
+> configurations) is not covered.
+
 ---
 
 ## What is specific to this repository
