@@ -47,7 +47,7 @@ PY="${VHS_PY:-/opt/homebrew/bin/python3}"
 RFRATE=28.636363
 THREADS="${VHS_THREADS:-4}"                 # vhs-decode のスレッド数
 SPREAD_MAX="${VHS_SPREAD_FRAMES:-1.0}"      # 同期の窓ばらつき許容値(コマ)
-PROFILES="${VHS_PROFILES:-standard-v1 contrast-v1}"
+PROFILES="${VHS_PROFILES:-standard-v2 contrast-v2}"
 
 STEPS="check decode export crc align merge range deliver clips"
 
@@ -315,7 +315,7 @@ else ok "7/9 merge 済  （$(du -h "$MASTER" 2>/dev/null | cut -f1)）"; fi
 if done_of merge && [ ! -f "$MASTER" ]; then
   ng "保存マスターが見つからない: $MASTER"
   echo "  改名したなら、そのファイルを直接渡して納品物を作れる:"
-  echo "    vhsdeliver \"$MKVDIR/<改名したファイル>.mkv\" standard-v1"
+  echo "    vhsdeliver \"$MKVDIR/<改名したファイル>.mkv\" standard-v2"
   echo "  または場所を控え直す:"
   echo "    echo \"<実際のパス>\" > \"$ST/master.path\""
   exit 1
@@ -358,7 +358,7 @@ if ! done_of clips; then
   i=1
   for T in $((DUR/14)) $((DUR/2)) $((DUR*93/100)); do
     ffmpeg -nostdin -v error -y -ss "$T" -i "$MASTER" -t 20 \
-      -vf "bwdif=mode=send_field:parity=tff,crop=704:480:28:4,scale=640:480:flags=lanczos:in_range=pc:out_range=tv,setsar=1" \
+      -vf "bwdif=mode=send_field:parity=tff,crop=746:480:4:4,scale=640:480:flags=lanczos:in_range=pc:out_range=tv,setsar=1" \
       -c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k \
       "$OUT/${NAME}_確認_${i}.mp4" 2>/dev/null
     printf '  %d本目 %02d:%02d から20秒  %s\n' "$i" $((T/60)) $((T%60)) \
