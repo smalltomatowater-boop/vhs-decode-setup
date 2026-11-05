@@ -15,7 +15,9 @@ RFTOO=0
 [ "${2:-}" = "--rf" ] && RFTOO=1
 [ -n "$NAME" ] || { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
-WORK="$NAS/mac_$NAME"
+WORKBASE="${VHS_WORK_DIR:-$NAS}"
+WORK="$WORKBASE/mac_$NAME"
+VIDBASE="${VHS_VIDEO_DIR:-$WORK}"
 RF="$NAS/rf_$NAME.u8"
 
 # マスターは作品名に改名される運用。vhsfinish が控えた実際のパスを優先する。
@@ -54,11 +56,16 @@ done
 [ "$N" -ge 1 ] || { ng "納品MP4が1本も無い"; exit 1; }
 
 BEFORE=$(du -sm "$WORK" | cut -f1)
-for f in dec.tbc dec_chroma.tbc dec.tbc.json dec_chroma.tbc.json dec.log video.mkv; do
+for f in dec.tbc dec_chroma.tbc dec.tbc.json dec_chroma.tbc.json dec.log; do
   [ -e "${WORK:?}/$f" ] || continue
   printf '  削除 %-22s %s\n' "$f" "$(du -h "${WORK:?}/$f" | cut -f1)"
   rm -f -- "${WORK:?}/$f"
 done
+# video.mkv は VHS_VIDEO_DIR で別の場所に出ていることがある
+if [ -e "${VIDBASE:?}/video.mkv" ]; then
+  printf '  削除 %-22s %s\n' "video.mkv" "$(du -h "${VIDBASE:?}/video.mkv" | cut -f1)"
+  rm -f -- "${VIDBASE:?}/video.mkv"
+fi
 AFTER=$(du -sm "$WORK" | cut -f1)
 ok "$((BEFORE-AFTER)) MB 解放（$BEFORE MB → $AFTER MB）"
 echo "  残したもの: .state / finish.log / align.json"

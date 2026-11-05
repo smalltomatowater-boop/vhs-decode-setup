@@ -73,7 +73,20 @@ done
 
 RF="$NAS/rf_$NAME.u8"
 REF="$NAS/ref_$NAME.mkv"
-WORK="$NAS/mac_$NAME"
+# 中間ファイルの置き場。VHS_WORK_DIR を指定するとNASではなくそこに作る。
+# NASは無線の向こうで読み24MB/s・書き約18MB/sしか出ない。tape06では
+# decode の3h36が、ほぼそのまま tbc 232GB の書き込み待ちだった。中間だけ
+# ローカルSSDへ逃がすと、無線を通る総量が 1.1TB → 約230GB に落ちる。
+# 未指定なら従来どおりNAS上に作るので、既存の挙動は変わらない。
+WORKBASE="${VHS_WORK_DIR:-$NAS}"
+WORK="$WORKBASE/mac_$NAME"
+# 書き出した無音映像(video.mkv)の置き場。VHS_VIDEO_DIR で中間とは別にできる。
+# 120分テープは dec.tbc 2本で382GiB、video.mkv を足すと463GiBになり
+# 512GB SSD(実使用476GiB)に対して余裕が3%しか残らない。FFV1の大きさは
+# テープのノイズ量で変わるため、映像だけNASへ逃がせるようにしてある。
+# 未指定なら中間と同じ場所（従来どおり）。
+VIDBASE="${VHS_VIDEO_DIR:-$WORK}"
+VID="$VIDBASE/video.mkv"
 ST="$WORK/.state"
 LOG="$WORK/finish.log"
 
@@ -105,16 +118,16 @@ if [ "$STATUS" = 1 ]; then
     else                  printf '  \033[33m未\033[0m %-8s\n' "$s"; fi
   done
   echo
-  for f in "$RF" "$REF" "$WORK/dec.tbc" "$WORK/video.mkv" "$MASTER"; do
+  for f in "$RF" "$REF" "$WORK/dec.tbc" "$VID" "$MASTER"; do
     [ -f "$f" ] && printf '  %8s  %s\n' "$(du -h "$f" | cut -f1)" "$f"
   done
   echo
-  printf '  作業用 %s\n  マスター %s\n  納品物 %s\n' "$NAS" "$MKVDIR" "$MP4DIR"
+  printf '  原本 %s\n  中間 %s\n  マスター %s\n  納品物 %s\n' "$NAS" "$WORKBASE" "$MKVDIR" "$MP4DIR"
   exit 0
 fi
 
 [ -n "$FROM" ] && unmark_from "$FROM"
-mkdir -p "$WORK" "$ST" 2>/dev/null || { ng "$WORK を作れない（NASがマウントされていない？）"; exit 1; }
+mkdir -p "$WORK" "$ST" "$VIDBASE" 2>/dev/null || { ng "$WORK を作れない（置き場がマウントされていない？）"; exit 1; }
 exec > >(tee -a "$LOG") 2>&1
 printf '\n\n########## %s  %s ##########\n' "$NAME" "$(date +%FT%T)"
 
@@ -151,10 +164,13 @@ if ! done_of check; then
   ok "python $("$PY" -c 'import numpy,platform;print(platform.python_version(),"numpy",numpy.__version__)')"
 
   RFSZ=$(stat -f%z "$RF")
-  AVAIL=$(df -k "$NAS" | awk 'NR==2{print $4*1024}')
-  NEED=$(( RFSZ * 5 / 2 ))     # tape01実績: RF 46GB → 中間 110GB
+  AVAIL=$(df -k "$WORKBASE" | awk 'NR==2{print $4*1024}')
+  # 中間の実測比は tape01 で2.39倍、tape06 で2.42倍。既定250%は安全側の丸め。
+  # video.mkv を VHS_VIDEO_DIR で外へ出したときは200%で足りるので、
+  # VHS_NEED_PCT で下げられるようにしてある。
+  NEED=$(( RFSZ * ${VHS_NEED_PCT:-250} / 100 ))
   printf '  RF %s / 中間に必要 約%sG / 空き %s\n' \
-    "$(du -h "$RF" | cut -f1)" "$(( NEED/1073741824 ))" "$(df -h "$NAS" | awk 'NR==2{print $4}')"
+    "$(du -h "$RF" | cut -f1)" "$(( NEED/1073741824 ))" "$(df -h "$WORKBASE" | awk 'NR==2{print $4}')"
   [ "$AVAIL" -ge "$NEED" ] && ok "容量は足りる" || { ng "容量が足りない"; exit 1; }
   mark check
 else ok "1/9 check 済"; fi
@@ -174,12 +190,12 @@ else ok "2/9 decode 済  （$(du -h "$WORK/dec.tbc" 2>/dev/null | cut -f1)）"; 
 if ! done_of export; then
   c "3/9 カラー化して書き出し  $(hm)"
   "$BIN/tbc-video-export" --threads "$(sysctl -n hw.physicalcpu)" \
-    --chroma-decoder ntsc3d "$WORK/dec.tbc" "$WORK/video" 2>&1 \
+    --chroma-decoder ntsc3d "$WORK/dec.tbc" "$VIDBASE/video" 2>&1 \
     | grep -iE 'export finished|error' | sed 's/^/  /'
-  [ -f "$WORK/video.mkv" ] || { ng "書き出し失敗"; exit 1; }
-  ok "映像 $(du -h "$WORK/video.mkv" | cut -f1)"
+  [ -f "$VID" ] || { ng "書き出し失敗"; exit 1; }
+  ok "映像 $(du -h "$VID" | cut -f1)"
   mark export
-else ok "3/9 export 済  （$(du -h "$WORK/video.mkv" 2>/dev/null | cut -f1)）"; fi
+else ok "3/9 export 済  （$(du -h "$VID" 2>/dev/null | cut -f1)）"; fi
 
 # ---------------------------------------------------------------- 4 crc
 if ! done_of crc; then
@@ -188,7 +204,7 @@ if ! done_of crc; then
   else
     c "4/9 整合性検査  $(hm)"
     echo "  全フレームを読み直す。ネットワーク越しなので時間がかかる"
-    N=$(ffmpeg -v error -i "$WORK/video.mkv" -f null - 2>&1 | grep -c "CRC mismatch")
+    N=$(ffmpeg -v error -i "$VID" -f null - 2>&1 | grep -c "CRC mismatch")
     if [ "$N" = 0 ]; then ok "CRC不一致なし"
     else
       ng "CRC不一致 $N 件。この書き出しは信用できない"
@@ -205,7 +221,7 @@ if ! done_of align; then
     wn "5/9 align 省略（参照キャプチャが無い）"
   else
     c "5/9 同期を測る  $(hm)"
-    "$PY" "$REPO/bin/vhsalign.py" "$WORK/video.mkv" "$REF" || { ng "同期計算に失敗"; exit 1; }
+    "$PY" "$REPO/bin/vhsalign.py" "$VID" "$REF" || { ng "同期計算に失敗"; exit 1; }
     cp /tmp/vhsalign.json "$WORK/align.json"
 
     c "6/9 同期の合否判定"
@@ -250,7 +266,7 @@ if ! done_of merge; then
 
   mkdir -p "$MKVDIR" 2>/dev/null || { ng "$MKVDIR が見えない（共有がマウントされていない）"; exit 1; }
   if [ ! -f "$REF" ]; then
-    cp "$WORK/video.mkv" "$MASTER"
+    cp "$VID" "$MASTER"
     echo "$MASTER" > "$ST/master.path"
     ok "音声なしで複製 → $(basename "$MASTER")"
   else
@@ -289,7 +305,7 @@ PY
     fi
 
     ffmpeg -nostdin -v error -y \
-      -i "$WORK/video.mkv" "${AIN[@]}" -i "$REF" \
+      -i "$VID" "${AIN[@]}" -i "$REF" \
       -map 0:v -map 1:a \
       -af "$AF" \
       -c:v copy -c:a flac -compression_level 8 \
