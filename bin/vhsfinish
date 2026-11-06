@@ -88,7 +88,14 @@ WORK="$WORKBASE/mac_$NAME"
 VIDBASE="${VHS_VIDEO_DIR:-$WORK}"
 VID="$VIDBASE/video.mkv"
 ST="$WORK/.state"
-LOG="$WORK/finish.log"
+# 作業ログは中間の置き場に置かない。中間をローカルSSDへ逃がした運用で
+# そのSSDがUSBから脱落したとき、最初に死んだのがこの finish.log だった
+# （tee: .../finish.log: Input/output error）。原因を追う唯一の手がかりが
+# 壊れた側のディスクに載っていると、落ちた瞬間に一緒に消える。内蔵に固定する。
+# 置き場を変えたいときは VHS_LOG_DIR。
+LOGDIR="${VHS_LOG_DIR:-$HOME/.local/state/vhsfinish}"
+mkdir -p "$LOGDIR" || { ng "ログの置き場を作れない: $LOGDIR"; exit 1; }
+LOG="$LOGDIR/$NAME.log"
 
 # 保存マスターの場所。作るときは 完成_<名前>.mkv だが、あとから作品名に
 # 改名される運用なので、作った時点の実際のパスを .state に控えておき、
