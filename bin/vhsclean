@@ -75,7 +75,7 @@ if [ "$RFTOO" = 1 ]; then
   [ -f "$RF" ] || { wn "$RF は既に無い"; exit 0; }
   # 原本を消すのは最後の砦を外す操作。マスターが読み通せることまで確かめる。
   echo "  マスターを全フレーム読んで検査する（時間がかかる）"
-  CRC=$(ffmpeg -v error -i "$MASTER" -f null - 2>&1 | grep -c "CRC mismatch")
+  CRC=$(ffmpeg -nostdin -v error -i "$MASTER" -f null - 2>&1 | grep -c "CRC mismatch")
   [ "$CRC" = 0 ] || { ng "マスターにCRC不一致 $CRC 件。原本は消さない"; exit 1; }
   ok "マスターはCRC不一致なし"
   printf '  原本 %s を削除する。元に戻せない。よければ %s と打て: ' \

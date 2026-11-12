@@ -212,7 +212,7 @@ print(int(os.path.getsize('$rf') / 28_636_363 * 30000/1001))")
   ok "映像 $(du -h "$d/video.mkv" | cut -f1)"
 
   c "=== 整合性検査 ==="
-  local crc; crc=$(ffmpeg -v error -i "$d/video.mkv" -f null - 2>&1 | grep -c "CRC mismatch")
+  local crc; crc=$(ffmpeg -nostdin -v error -i "$d/video.mkv" -f null - 2>&1 | grep -c "CRC mismatch")
   [ "$crc" = "0" ] && ok "CRC不一致なし" || wn "CRC不一致 $crc 件"
 
   rm -f "$d"/seg*.tbc "$d"/seg*_chroma.tbc "$d"/seg*.tbc.json "$d"/seg*.declog \
