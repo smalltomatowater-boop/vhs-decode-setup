@@ -101,10 +101,15 @@ bin/
                    （vhsfinish が実際に呼ぶのはこちら）
   vhsdropouts.py   dec.tbc.json からテープの傷の位置を取り出して診断する
   vhsstreaks.py    映像の画素から横縞を数える（RFの記録が無いキャプチャ用）
+  vhschroma.py     白飛び場面で出る虹色ノイズの区間を見つける（v3プロファイル用）
   vhsqa.py         工程別にどこでどれだけ失われたかを測る
 profiles/
   standard-v1.sh   標準納品の凍結値（黒点68）
   contrast-v1.sh   コントラスト重視（黒点84）
+  standard-v2.sh   v1の切り出しを実測で修正（crop=746:480:4:4）
+  contrast-v2.sh   同上
+  standard-v3.sh   v2＋白飛びの虹色ノイズを消す（VHS_CHROMA_JSON が要る）
+  contrast-v3.sh   同上
 config/            cxadc と GV-USB2 の設定ファイル
 patches/           上流に未取り込みの修正3本
 docs/
@@ -356,6 +361,8 @@ vhsclean 名前 --rf        原本RFも削除（成果物を照合し、名前�
 vhsdropouts.py 作業場/dec.tbc.json          テープの傷の位置を診断する
 vhsdropouts.py … --t1 430 --lmin 12 --lmax 231   窓を切って測り直す
 vhsstreaks.py 動画ファイル                  画素から横縞を数える
+vhschroma.py 動画 --scan                    色ノイズの分布を見る
+vhschroma.py 動画 --out <作業場>/chroma_mute.json   色を切る区間を書き出す
 ```
 
 **`vhsclean` の前に `vhsdropouts.py` を走らせること。**
