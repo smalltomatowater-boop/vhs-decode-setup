@@ -46,7 +46,14 @@ MP4DIR="${VHS_MP4_DIR:-/Volumes/rf_mp4}"
 PY="${VHS_PY:-/opt/homebrew/bin/python3}"
 RFRATE=28.636363
 THREADS="${VHS_THREADS:-4}"                 # vhs-decode のスレッド数
-SPREAD_MAX="${VHS_SPREAD_FRAMES:-1.0}"      # 同期の窓ばらつき許容値(コマ)
+# 同期の合否基準。2026-11-06に既存6本を遡って検証し、見る量を変えた。
+# 旧: 窓ごとのばらつき(σ) 1.0コマ以内。これはσ 2.2コマの tape06 を落とすが、
+#     tape06 は人が目で見て合格を出して納品した本だった。σは「個々の測定が
+#     どれだけ揃っているか」で、知りたいのは「採用する1つの値がどれだけ
+#     確かか」。窓を増やすほどσは正直に大きくなるので、永久に通らない。
+# 新: 中央値の標準誤差 1.0コマ以内。σ/√n 相当まで下がる量。6本とも 0.2〜0.7。
+SE_MAX="${VHS_SE_FRAMES:-1.0}"              # 中央値の標準誤差の許容値(コマ)
+WIN_MIN="${VHS_MIN_WINDOWS:-6}"             # 採用する窓の最低本数
 PROFILES="${VHS_PROFILES:-standard-v2 contrast-v2}"
 
 STEPS="check decode export crc align merge range deliver clips"
@@ -211,7 +218,7 @@ if ! done_of crc; then
   else
     c "4/9 整合性検査  $(hm)"
     echo "  全フレームを読み直す。ネットワーク越しなので時間がかかる"
-    N=$(ffmpeg -v error -i "$VID" -f null - 2>&1 | grep -c "CRC mismatch")
+    N=$(ffmpeg -nostdin -v error -i "$VID" -f null - 2>&1 | grep -c "CRC mismatch")
     if [ "$N" = 0 ]; then ok "CRC不一致なし"
     else
       ng "CRC不一致 $N 件。この書き出しは信用できない"
@@ -228,20 +235,27 @@ if ! done_of align; then
     wn "5/9 align 省略（参照キャプチャが無い）"
   else
     c "5/9 同期を測る  $(hm)"
-    "$PY" "$REPO/bin/vhsalign.py" "$VID" "$REF" || { ng "同期計算に失敗"; exit 1; }
-    cp /tmp/vhsalign.json "$WORK/align.json"
+    "$PY" "$REPO/bin/vhsalign2.py" "$VID" "$REF" --out "$WORK/align.json" \
+      || { ng "同期計算に失敗"; exit 1; }
 
     c "6/9 同期の合否判定"
-    read -r CONF SPREAD FPS USED < <("$PY" - "$WORK/align.json" <<'PY'
+    read -r CONF SPREAD SE FPS USED TOTAL TRIM DDIFF < <("$PY" - "$WORK/align.json" <<'PY'
 import json,sys
 j=json.load(open(sys.argv[1]))
-print(j["confidence"], j["spread_sec"], j["fps"], j["windows_used"])
+print(j["confidence"], j["spread_sec"], j["se_frames"], j["fps"],
+      j["windows_used"], j["windows_total"], j["trim_sec"],
+      j["duration_diff_sec"])
 PY
 )
     SPF=$("$PY" -c "print(f'{$SPREAD*$FPS:.2f}')")
-    echo "  信頼度 $CONF / ばらつき ${SPF}コマ / 採用した窓 ${USED}個"
-    echo "  合格条件: ばらつき ${SPREAD_MAX}コマ以内 かつ 窓4個以上"
-    if "$PY" -c "import sys;sys.exit(0 if $SPF <= $SPREAD_MAX and $USED >= 4 else 1)"; then
+    SEF=$("$PY" -c "print(f'{$SE:.2f}')")
+    GAP=$("$PY" -c "print(f'{abs($TRIM-$DDIFF):.3f}')")
+    TRIMF=$("$PY" -c "print(f'{$TRIM:+.3f}')")
+    echo "  ズレ ${TRIMF}秒 / 採用した窓 ${USED}/${TOTAL} / 信頼度 $CONF"
+    echo "  ばらつき(σ) ${SPF}コマ    標準誤差 ${SEF}コマ  ← 合否はこちら"
+    echo "  長さの差から見た推定との開き ${GAP}秒（内容を見ない独立推定）"
+    echo "  合格条件: 標準誤差 ${SE_MAX}コマ以内 かつ 窓${WIN_MIN}本以上"
+    if "$PY" -c "import sys;sys.exit(0 if $SEF <= $SE_MAX and $USED >= $WIN_MIN else 1)"; then
       ok "合格。無人で先に進む"
     elif [ "$YES" = 1 ]; then
       wn "不合格だが --yes なので進む。できた動画の音ズレを必ず確認すること"
@@ -249,7 +263,7 @@ PY
       ng "不合格。ここで止める"
       echo
       echo "  ここから先は人が判断すること。選択肢は3つ:"
-      echo "    1) 窓の条件を変えて測り直す（vhsalign.py の NWIN / WIN を増やす）"
+      echo "    1) 窓の条件を変えて測り直す（vhsalign2.py --nwin / --win）"
       echo "    2) 測定値を信じて進める:"
       echo "         vhsfinish $NAME --yes"
       echo "    3) 音声を諦めて映像だけ仕上げる:"
