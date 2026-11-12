@@ -97,6 +97,10 @@ bin/
   vhsdeliver       保存マスターから納品用MP4を作る（プロファイル駆動）
   vhsverify        納品物の自動チェック 15項目
   vhsalign.py      RF映像と参照映像のズレを測る（窓を複数置く方式）
+  vhsalign2.py     同上の第2版。全768次元で相関し、中央値の標準誤差で合否を出す
+                   （vhsfinish が実際に呼ぶのはこちら）
+  vhsdropouts.py   dec.tbc.json からテープの傷の位置を取り出して診断する
+  vhsstreaks.py    映像の画素から横縞を数える（RFの記録が無いキャプチャ用）
   vhsqa.py         工程別にどこでどれだけ失われたかを測る
 profiles/
   standard-v1.sh   標準納品の凍結値（黒点68）
@@ -349,6 +353,18 @@ vhsfinish 名前 --yes      同期が不合格でも進める（非推奨）
 vhsclean 名前             中間を片づける
 vhsclean 名前 --rf        原本RFも削除（成果物を照合し、名前を打たせる）
 
+vhsdropouts.py 作業場/dec.tbc.json          テープの傷の位置を診断する
+vhsdropouts.py … --t1 430 --lmin 12 --lmax 231   窓を切って測り直す
+vhsstreaks.py 動画ファイル                  画素から横縞を数える
+```
+
+**`vhsclean` の前に `vhsdropouts.py` を走らせること。**
+テープのどこが傷んでいるかは `dec.tbc.json` にしか入っていない。
+`vhsclean` はそれを消すので、片づけたあとは総数しか残らず
+「テープが悪いのかデッキが悪いのか」に答えられなくなる。
+要約は `~/.local/state/vhsfinish/<名前>_dropouts.json` に出しておく。
+
+```sh
 setup-mac.sh verify       必要なツールが揃っているか確認
 ```
 
