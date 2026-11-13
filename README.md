@@ -114,9 +114,15 @@ profiles/
                    ※2026-11-13 役目終了。デコード段で --use_saved_levels を
                      標準化したため、納品段での色消しは不要になった。
                      事情は docs/verify-use-saved-levels.md
-  standard-v4.sh   ★本番。0 IRE マスター用（黒点37 = 0.0 IRE）
-  contrast-v4.sh   ★本番。0 IRE マスター用（黒点137 = 11.6 IRE。
-                     contrast-v2 と同じ見た目）
+  standard-v4.sh   0 IRE マスター用（黒点37 = 0.0 IRE）。640x480
+  contrast-v4.sh   0 IRE マスター用（黒点137 = 11.6 IRE）。640x480
+  standard-v5.sh   ★本番。v4 ＋ 横を縮めない・切り出しを measured で修正
+  contrast-v5.sh   ★本番。同上
+                   746x476 画素比6:7（正方画素で 639.4x476、表示比1.34334）
+                   ・横の再標本化をしない（4fscの746標本＝4:3の有効画面）
+                   ・切り出しの右3画素ずれを直した（746:476:1:4）
+                   ・下のヘッド切替の帯4行を落とした
+                   事情は docs/verify-geometry-v5.md
 
   ※v1/v2/v3 は 7.5 IRE 時代のマスター専用。v4 は --NTSCJ で
     デコードした 0 IRE マスター専用。取り違えると明るさも色も狂うので、

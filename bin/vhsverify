@@ -11,6 +11,9 @@ F=${1:-}
 M=${2:-}
 [ -f "$F" ] || { echo "使い方: vhsverify <納品ファイル> [保存マスター]"; exit 2; }
 
+# python は環境によって名前が違う。先に決めておく。
+PY=$(command -v python3 || command -v python) || { echo "python が無い"; exit 2; }
+
 NG=0
 ok(){ printf '  \033[32m合格\033[0m %s\n' "$*"; }
 ng(){ printf '  \033[31m不合格\033[0m %s\n' "$*"; NG=$((NG+1)); }
@@ -37,7 +40,22 @@ W=$(f v:0 width); H=$(f v:0 height); FR=$(f v:0 r_frame_rate)
 [ "$VC" = h264 ]      && ok "H.264"               || ng "映像コーデックが ${VC}"
 [ "$PIX" = yuv420p ]  && ok "yuv420p"             || ng "画素形式が ${PIX}"
 [ "$RANGE" = tv ]     && ok "color_range=tv"      || ng "color_range が ${RANGE}（tv でないとプレーヤーが誤解釈する）"
-[ "$W" = 640 ] && [ "$H" = 480 ] && ok "640x480"  || ng "解像度が ${W}x${H}"
+# 大きさは固定で縛らない。画素比を掛けて正方画素に直した幅が
+# 4:3 の 640 付近に来るか、で見る。
+#   v2〜v4  640x480 画素比 1:1      → 640.0
+#   v5      746x476 画素比 6:7      → 639.4（高さはヘッド切替の帯を削って476）
+SAR=$(f v:0 sample_aspect_ratio); DAR=$(f v:0 display_aspect_ratio)
+EW=$("$PY" - "$W" "${SAR:-1:1}" <<'PYEOF'
+import sys
+w=int(sys.argv[1]); a=sys.argv[2].replace(':','/')
+try: n,d=a.split('/'); print(f"{w*int(n)/int(d):.1f}")
+except Exception: print(f"{w:.1f}")
+PYEOF
+)
+"$PY" -c "import sys;sys.exit(0 if 638.0 <= float('$EW') <= 641.0 else 1)" 2>/dev/null \
+  && [ "$H" -ge 470 ] && [ "$H" -le 481 ] \
+  && ok "${W}x${H} 画素比${SAR} → 正方画素で ${EW}x${H}（表示比 ${DAR}）" \
+  || ng "解像度 ${W}x${H} / 画素比 ${SAR} / 正方画素換算 ${EW}x${H}（幅638〜641・高さ470〜481であること）"
 [ "$FR" = "60000/1001" ] && ok "59.94 fps"        || ng "フレームレートが ${FR}"
 
 # --- 3. 音声の仕様 ---
