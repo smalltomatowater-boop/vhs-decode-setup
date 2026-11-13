@@ -180,7 +180,8 @@ print(int(os.path.getsize('$rf') / 28_636_363 * 30000/1001))")
     # レベルを決める。区間の境目でレベルが僅かに食い違う可能性があり、
     # そこは未検証。それでも付けるのは、付けないと白飛びで確実に壊れる
     # （tape05で実証）ため。境目に段差が見えたら ここを疑うこと。
-    ( vhs-decode --tf VHS --system NTSC -f $RFRATE -t 3 --use_saved_levels \
+    # --NTSCJ の理由は vhsfinish の同じ行の注記を見ること（黒 0 IRE）
+    ( vhs-decode --tf VHS --system NTSC --NTSCJ -f $RFRATE -t 3 --use_saved_levels \
         -s "$s" -l "$l" --overwrite "$rf" "$d/seg$i" > "$d/seg$i.declog" 2>&1 ) &
     pids+=($!)
   done
@@ -235,8 +236,8 @@ cmd_build() {
   # 以前は直接 grep に通していたため、落ちたときのエラーが1行も残らず、
   # 0バイトのTBCのまま次の工程へ進んでいた（tape03 で SIGSEGV を見逃した）。
   local declog="$d/decode.out"
-  # --use_saved_levels の理由は vhsfinish の同じ行の注記を見ること
-  vhs-decode --tf VHS --system NTSC -f $RFRATE -t "$(nproc)" --use_saved_levels --overwrite "$rf" "$d/dec" \
+  # --use_saved_levels と --NTSCJ の理由は vhsfinish の同じ行の注記を見ること
+  vhs-decode --tf VHS --system NTSC --NTSCJ -f $RFRATE -t "$(nproc)" --use_saved_levels --overwrite "$rf" "$d/dec" \
     > "$declog" 2>&1
   local rc=$?
   grep -E 'Took|Completed' "$declog" | sed 's/^/  /'

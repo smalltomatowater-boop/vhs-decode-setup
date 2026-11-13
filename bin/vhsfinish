@@ -199,7 +199,20 @@ if ! done_of decode; then
   # （平均輝度 +0.76/255、黒点一致、前半/後半の差は時間とともに縮む）。
   # vhs-decode 自身も「いずれ標準にする」と書いている設定。
   # 2026-11-13 標準化。2時間テープでの長時間検証は未実施。
-  vhs-decode --tf VHS --system NTSC -f $RFRATE -t "$THREADS" --use_saved_levels --overwrite "$RF" "$WORK/dec" 2>&1 \
+  #
+  # --NTSCJ: 日本のテープは黒が 0 IRE。付けないと米国式の 7.5 IRE
+  # セットアップが前提になり、黒より下の 7.5 IRE 幅ぶんが書き出しの
+  # 時点で切り捨てられる。実測（tape05、全編685コマ 0.25G画素）:
+  #   7.5IRE … 画素の 14.61% が床(値4)に張り付く
+  #   0IRE   … 11.45%。差 3.16% ぶんの暗部が戻る
+  # 真っ黒のリードイン20コマでは 7.5IRE が 100% 床に張り付くのに対し
+  # 0IRE は 89.8%、99%点が値14 ＝ ノイズの粒が信号として残っている。
+  # 影響は信号全体の一次変換 out_new = 0.9431*out_old + 58.24 で、
+  # 輝度・色差とも同じ比率（実測 Y 0.9431 / U 0.9430 / V 0.9428）。
+  # 黒点は納品プロファイル側で取り直すこと（standard-v2/contrast-v2 は
+  # 7.5IRE マスター用。0IRE マスターには使えない）。
+  # 2026-11-13 標準化。
+  vhs-decode --tf VHS --system NTSC --NTSCJ -f $RFRATE -t "$THREADS" --use_saved_levels --overwrite "$RF" "$WORK/dec" 2>&1 \
     | grep -E 'Took|Completed|Error' | sed 's/^/  /'
   [ -f "$WORK/dec.tbc" ] || { ng "デコード失敗"; exit 1; }
   ok "TBC $(du -h "$WORK/dec.tbc" | cut -f1) ＋ chroma"
@@ -379,6 +392,19 @@ if ! done_of range; then
     RNG=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_range -of csv=p=0 "$MASTER")
     [ "$RNG" = pc ] && ok "pc になった" || { ng "まだ ${RNG}"; exit 1; }
   fi
+
+  # 黒レベルの出自をマスター自身に書き込む。
+  # --NTSCJ でデコードしているので黒は 0 IRE。これを名乗らせておかないと、
+  # 7.5 IRE 時代のマスター用プロファイル（standard-v2 など）を当てても
+  # 気づけない。改名してもタグはファイルについて回る。映像には触らない。
+  TAGXML="$WORK/blackire.xml"
+  cat > "$TAGXML" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<Tags><Tag><Simple><Name>VHS_BLACK_IRE</Name><String>0</String></Simple></Tag></Tags>
+XML
+  mkvpropedit "$MASTER" --tags "global:$TAGXML" >/dev/null || { ng "黒レベルのタグ付けに失敗"; exit 1; }
+  BIRE=$(ffprobe -v error -show_entries format_tags=VHS_BLACK_IRE -of default=nw=1:nk=1 "$MASTER")
+  [ "$BIRE" = 0 ] && ok "黒レベル 0 IRE と記録" || { ng "タグが読めない"; exit 1; }
   mark range
 else ok "8/9 range 済"; fi
 

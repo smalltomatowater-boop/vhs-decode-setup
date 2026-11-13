@@ -113,7 +113,16 @@ profiles/
   contrast-v3.sh   同上
                    ※2026-11-13 役目終了。デコード段で --use_saved_levels を
                      標準化したため、納品段での色消しは不要になった。
-                     本番は v2 を使う。事情は docs/verify-use-saved-levels.md
+                     事情は docs/verify-use-saved-levels.md
+  standard-v4.sh   ★本番。0 IRE マスター用（黒点37 = 0.0 IRE）
+  contrast-v4.sh   ★本番。0 IRE マスター用（黒点137 = 11.6 IRE。
+                     contrast-v2 と同じ見た目）
+
+  ※v1/v2/v3 は 7.5 IRE 時代のマスター専用。v4 は --NTSCJ で
+    デコードした 0 IRE マスター専用。取り違えると明るさも色も狂うので、
+    vhsdeliver がマスターの VHS_BLACK_IRE タグと突き合わせて止める。
+    名乗りの無いマスター／プロファイルは 7.5（古い側）とみなす。
+    事情は docs/verify-ntscj-0ire.md
 config/            cxadc と GV-USB2 の設定ファイル
 patches/           上流に未取り込みの修正3本
 docs/

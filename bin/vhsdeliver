@@ -58,6 +58,23 @@ if [ "$RNG" != "pc" ]; then
   exit 1
 fi
 
+# マスターと黒レベルの食い違いを止める。
+# 2026-11-13 以降のマスターは --NTSCJ でデコードしており、黒が 0 IRE。
+# それ以前のマスターは米国式 7.5 IRE で、同じ黒点を当てると絵が変わる
+# （信号全体が out_new = 0.9431*out_old + 58.24 だけずれている）。
+# マスター側は mkv のタグ、プロファイル側は MASTER_BLACK_IRE で名乗る。
+# どちらも名乗りが無ければ 7.5（古い側）とみなす。
+MB=$(ffprobe -v error -show_entries format_tags=VHS_BLACK_IRE -of default=nw=1:nk=1 "$SRC" 2>/dev/null)
+MB=${MB:-7.5}
+PB=${MASTER_BLACK_IRE:-7.5}
+if [ "$MB" != "$PB" ]; then
+  echo "マスターと納品プロファイルの黒レベルが食い違っている。"
+  echo "  マスター      $SRC  … 黒 ${MB} IRE"
+  echo "  プロファイル  ${PROFILE_NAME}  … 黒 ${PB} IRE のマスター用"
+  echo "  そのまま焼くと明るさも色も狂う。対応するプロファイルを使うこと。"
+  exit 1
+fi
+
 VF="$DEINTERLACE,$CROP"
 VF="$VF,lutyuv=y='clip((val-$BLACK)*1023/(1023-$BLACK),0,1023)'"
 VF="$VF,$NR,$SCALE"
