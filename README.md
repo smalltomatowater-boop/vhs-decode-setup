@@ -101,7 +101,8 @@ bin/
                    （vhsfinish が実際に呼ぶのはこちら）
   vhsdropouts.py   dec.tbc.json からテープの傷の位置を取り出して診断する
   vhsstreaks.py    映像の画素から横縞を数える（RFの記録が無いキャプチャ用）
-  vhschroma.py     白飛び場面で出る虹色ノイズの区間を見つける（v3プロファイル用）
+  vhschroma.py     白飛び場面で出る虹色ノイズの区間を見つける
+  vhstear.py       横に裂けたコマ（帰線期間の黒帯が絵の中に出る）を見つける
   vhsqa.py         工程別にどこでどれだけ失われたかを測る
 profiles/
   standard-v1.sh   標準納品の凍結値（黒点68）
@@ -110,6 +111,9 @@ profiles/
   contrast-v2.sh   同上
   standard-v3.sh   v2＋白飛びの虹色ノイズを消す（VHS_CHROMA_JSON が要る）
   contrast-v3.sh   同上
+                   ※2026-11-13 役目終了。デコード段で --use_saved_levels を
+                     標準化したため、納品段での色消しは不要になった。
+                     本番は v2 を使う。事情は docs/verify-use-saved-levels.md
 config/            cxadc と GV-USB2 の設定ファイル
 patches/           上流に未取り込みの修正3本
 docs/
@@ -363,7 +367,13 @@ vhsdropouts.py … --t1 430 --lmin 12 --lmax 231   窓を切って測り直す
 vhsstreaks.py 動画ファイル                  画素から横縞を数える
 vhschroma.py 動画 --scan                    色ノイズの分布を見る
 vhschroma.py 動画 --out <作業場>/chroma_mute.json   色を切る区間を書き出す
+vhstear.py 動画                             裂けたコマを数える（中間マスター用）
+vhstear.py 納品物.mp4 --pre null            納品mp4を測るときは --pre null
 ```
+
+**`vhstear.py` を納品mp4にかけるときは `--pre null` を渡すこと。**
+既定の `--pre` は `bwdif+crop=746:480:4:4`。納品物はすでに
+progressive の 640x480 なので、746 幅の切り出しは通らない。
 
 **`vhsclean` の前に `vhsdropouts.py` を走らせること。**
 テープのどこが傷んでいるかは `dec.tbc.json` にしか入っていない。

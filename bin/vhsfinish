@@ -193,7 +193,13 @@ else ok "1/9 check 済"; fi
 if ! done_of decode; then
   c "2/9 RFをデコード  $(hm)"
   echo "  $RF → $WORK/dec.tbc  （数時間かかる）"
-  vhs-decode --tf VHS --system NTSC -f $RFRATE -t "$THREADS" --overwrite "$RF" "$WORK/dec" 2>&1 \
+  # --use_saved_levels: 最初の数フィールドで測った映像レベルを使い回す。
+  # 無いと白飛び場面でレベル再測定が狂い、復調ごと壊れる（tape05で実証）。
+  # tape05r 全編7.6分で 裂け1265コマ→0 / 虹色17区間→0、正常な絵は無変化
+  # （平均輝度 +0.76/255、黒点一致、前半/後半の差は時間とともに縮む）。
+  # vhs-decode 自身も「いずれ標準にする」と書いている設定。
+  # 2026-11-13 標準化。2時間テープでの長時間検証は未実施。
+  vhs-decode --tf VHS --system NTSC -f $RFRATE -t "$THREADS" --use_saved_levels --overwrite "$RF" "$WORK/dec" 2>&1 \
     | grep -E 'Took|Completed|Error' | sed 's/^/  /'
   [ -f "$WORK/dec.tbc" ] || { ng "デコード失敗"; exit 1; }
   ok "TBC $(du -h "$WORK/dec.tbc" | cut -f1) ＋ chroma"
