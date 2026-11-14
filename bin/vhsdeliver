@@ -76,7 +76,16 @@ if [ "$MB" != "$PB" ]; then
 fi
 
 VF="$DEINTERLACE,$CROP"
-VF="$VF,lutyuv=y='clip((val-$BLACK)*1023/(1023-$BLACK),0,1023)'"
+# 既定は黒点を引いて伸ばすだけ。色には触らない。
+# プロファイルが LUTYUV を定義していればそちらを使う。
+# 7.5 IRE 時代のマスターを 0 IRE 相当に直す v6 で、輝度の一次変換と
+# 彩度の補正を同時にかけるために要る。黒点だけでは色が戻せない
+# （納品に彩度のつまみが無く、設定誤りは輝度と色差に同率でかかっていた）。
+if [ -n "${LUTYUV:-}" ]; then
+  VF="$VF,$LUTYUV"
+else
+  VF="$VF,lutyuv=y='clip((val-$BLACK)*1023/(1023-$BLACK),0,1023)'"
+fi
 VF="$VF,$NR,$SCALE"
 
 echo "=== ${PROFILE_NAME}（黒点 ${BLACK}）  $(date +%H:%M:%S) ==="
