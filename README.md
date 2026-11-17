@@ -68,7 +68,7 @@ VHSデジタル化のために古いPCを用意すると踏みやすい組み合
 | 参照キャプチャ | I-O DATA GV-USB2 (USB) + [GV-USB2-Driver](https://github.com/Isaac-Lozano/GV-USB2-Driver) |
 | デッキ | ビクター HR-VX100 |
 | 収録先 | 内蔵SATA SSD 238GB を ext4 で専用化（実測 397MB/s） |
-| 仕上げ機 | Apple M4 10コア / 32GB / macOS 26.5.1（書き出し以降を担当） |
+| 仕上げ機 | Apple M4 10コア / 32GB / macOS 26.5.1（**デコード以降**を担当。当初は書き出し以降だったが、2026-11 にデコードもこちらへ移した） |
 | 保管 | NAS 3.6TB（SMB・1000baseT）。共有を3つに分ける |
 
 ### 信号の流れ
@@ -142,8 +142,13 @@ docs/
   upstream-*.md    上流への報告ドラフト
 ```
 
-2台で分担している。収録とデコードは Ubuntu 機、**書き出し以降は Mac**。
-理由は Ubuntu 機のメモリ不良（「ハマった箇所」の9番）。
+2台で分担している。**収録（RF）は Ubuntu 機、デコード以降は Mac**（`vhsfinish`）。
+
+当初は「収録とデコードは Ubuntu 機、書き出し以降は Mac」だった。理由は
+Ubuntu 機のメモリ不良（「ハマった箇所」の9番）。その後デコードもMacへ移した
+ので、**いまの Ubuntu 機の仕事は収録とNASへの転送だけ**。`vhstool` の
+`build` / `pbuild` はデコード用に残してあるが、通常の運用では使わない。
+Ubuntu 機は有線が無く、NASへは無線 25MB/s が上限（RF 1時間で約70分）。
 全体の流れは [docs/flow.md](docs/flow.md) にコピペできる形で置いてある。
 
 ---
