@@ -54,7 +54,10 @@ THREADS="${VHS_THREADS:-4}"                 # vhs-decode のスレッド数
 # 新: 中央値の標準誤差 1.0コマ以内。σ/√n 相当まで下がる量。6本とも 0.2〜0.7。
 SE_MAX="${VHS_SE_FRAMES:-1.0}"              # 中央値の標準誤差の許容値(コマ)
 WIN_MIN="${VHS_MIN_WINDOWS:-6}"             # 採用する窓の最低本数
-PROFILES="${VHS_PROFILES:-standard-v2 contrast-v2}"
+# 既定は v5（0 IRE マスター用）。このスクリプトは --NTSCJ でデコードするので
+# 作るマスターは必ず 0 IRE で、7.5 IRE 用の v2 を当てると vhsdeliver が止める。
+# （2026-11-14 のベンチで、デコードから納品まで通した最後の工程で落ちて発覚）
+PROFILES="${VHS_PROFILES:-standard-v5 contrast-v5}"
 
 STEPS="check decode export crc align merge range deliver clips"
 
@@ -371,7 +374,7 @@ else ok "7/9 merge 済  （$(du -h "$MASTER" 2>/dev/null | cut -f1)）"; fi
 if done_of merge && [ ! -f "$MASTER" ]; then
   ng "保存マスターが見つからない: $MASTER"
   echo "  改名したなら、そのファイルを直接渡して納品物を作れる:"
-  echo "    vhsdeliver \"$MKVDIR/<改名したファイル>.mkv\" standard-v2"
+  echo "    vhsdeliver \"$MKVDIR/<改名したファイル>.mkv\" standard-v5"
   echo "  または場所を控え直す:"
   echo "    echo \"<実際のパス>\" > \"$ST/master.path\""
   exit 1
