@@ -123,6 +123,7 @@ profiles/
                    ・切り出しの右3画素ずれを直した（746:476:1:4）
                    ・下のヘッド切替の帯4行を落とした
                    事情は docs/verify-geometry-v5.md
+  contrast-v7.sh   ★本番(コントラスト重視)。v5 ＋ 色の濃さ 1.45 倍（0 IRE マスター専用、docs/verify-saturation-v7.md）
   standard-v6.sh   ★7.5 IRE 時代のマスター専用（作り直せない5本）
   contrast-v6.sh   ★同上
                    v5 と同じ画角・画素比のまま、黒レベル誤りの一次変換を
