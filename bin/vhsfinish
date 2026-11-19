@@ -60,7 +60,7 @@ WIN_MIN="${VHS_MIN_WINDOWS:-6}"             # 採用する窓の最低本数
 # 既定は v5（0 IRE マスター用）。このスクリプトは --NTSCJ でデコードするので
 # 作るマスターは必ず 0 IRE で、7.5 IRE 用の v2 を当てると vhsdeliver が止める。
 # （2026-11-14 のベンチで、デコードから納品まで通した最後の工程で落ちて発覚）
-PROFILES="${VHS_PROFILES:-standard-v5 contrast-v5}"
+PROFILES="${VHS_PROFILES:-standard-v5 contrast-v7}"
 
 STEPS="check decode export crc align merge range deliver clips"
 
