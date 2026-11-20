@@ -94,28 +94,32 @@ ERR=$(ffmpeg -nostdin -v error -i "$F" -f null - 2>&1 | grep -c . || true)
 [ "$ERR" = 0 ] && ok "全編の復号でエラー無し" || ng "復号中に ${ERR} 件のエラー"
 
 # --- 7. マスターとの音声照合（任意） ---
+# 途中へシークして比べると、マスター側のタイムスタンプの揺れで数十msずれて見えたり、
+# 平坦な窓で相関が出なかったりして誤検出する（tape10で実際に起きた）。
+# 先頭から順番に全編を復号し、サンプル位置で比べる。マスターが大きいと数分かかる。
 if [ -n "$M" ] && [ -f "$M" ]; then
-  python3 - "$M" "$F" <<'PY' && ok "マスターとの音声同期" || ng "マスターとの音声同期にずれ"
-import subprocess,sys,numpy as np
-def env(src,ss,dur=20):
-    o=subprocess.run(["ffmpeg","-nostdin","-v","error","-ss",str(ss),"-i",src,"-t",str(dur),
-        "-vn","-ac","1","-ar","4000","-f","f32le","-"],capture_output=True).stdout
-    return np.abs(np.frombuffer(o,'<f4').astype(np.float64))
-bad=0
-for t in (100,850,1600):
-    a=env(sys.argv[1],t); b=env(sys.argv[2],t)
-    n=min(len(a),len(b))
-    if n<4000: continue
-    a,b=a[:n],b[:n]; best=(0,-2)
-    for k in range(-1000,1001,4):
-        x=a[max(0,k):n+min(0,k)]; y=b[max(0,-k):n+min(0,-k)]
-        m=min(len(x),len(y)); xn=x[:m]-x[:m].mean(); yn=y[:m]-y[:m].mean()
-        d=np.sqrt((xn**2).sum()*(yn**2).sum())
-        c=(xn@yn)/d if d>1e-12 else 0
-        if c>best[1]: best=(k,c)
-    ms=best[0]/4.0
-    print(f"       {t:5d}秒  ずれ {ms:+7.1f} ms  相関 {best[1]:.4f}")
-    if abs(ms)>100 or best[1]<0.9: bad+=1
+  T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+  ffmpeg -nostdin -v error -i "$M" -vn -ac 1 -ar 16000 -f s16le "$T/m.raw" &
+  ffmpeg -nostdin -v error -i "$F" -vn -ac 1 -ar 16000 -f s16le "$T/f.raw" &
+  wait
+  "$PY" -I - "$T/m.raw" "$T/f.raw" <<'PY' && ok "マスターとの音声同期（全編を順番に復号して照合）" || ng "マスターとの音声同期にずれ"
+import sys,numpy as np
+R=16000
+a=np.fromfile(sys.argv[1],'<i2'); b=np.fromfile(sys.argv[2],'<i2')
+dl=(len(b)-len(a))/R*1000
+print(f"       全長の差 {dl:+.1f} ms（AACの詰め物で数十msは正常）")
+bad=abs(dl)>200
+n=20*R; tot=min(len(a),len(b))
+for frac in (0.02,0.2,0.4,0.6,0.8,0.97):
+    i=int(tot*frac)//R*R
+    x=a[i:i+n].astype(float); y=b[i:i+n].astype(float); m=min(len(x),len(y))
+    if m<R: continue
+    x,y=x[:m],y[:m]; N=1<<int(np.ceil(np.log2(2*m)))
+    c=np.fft.irfft(np.fft.rfft(x,N)*np.conj(np.fft.rfft(y,N)),N)
+    W=R//5; c=np.concatenate([c[-W:],c[:W+1]]); k=int(np.argmax(c))-W
+    r=c.max()/np.sqrt((x@x)*(y@y)+1e-9); ms=k/R*1000
+    print(f"       {i//R:5d}秒  ずれ {ms:+6.1f} ms  相関 {r:.4f}")
+    if abs(ms)>20 or r<0.9: bad=1
 sys.exit(1 if bad else 0)
 PY
 fi
